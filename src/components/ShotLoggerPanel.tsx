@@ -24,6 +24,7 @@ import {
   ShotRecord,
 } from '../types/golf';
 import {
+  CLUB_PRESETS,
   DIRECTION_OPTIONS,
   LIE_OPTIONS,
   formatDistanceValue,
@@ -110,7 +111,8 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const holeStrokes = getHoleStrokes(holeScore);
   const puttsCount = getEffectivePutts(holeScore);
   const penaltiesCount = getHolePenalties(holeScore);
-  const selectedClub = bag.find((c) => c.id === selectedClubId) ?? bag[0];
+  const availableClubs = bag.length > 0 ? bag : CLUB_PRESETS;
+  const selectedClub = availableClubs.find((c) => c.id === selectedClubId) ?? availableClubs[0];
   const suffix = unitSuffix(unit);
   const { isInstalled } = usePWAInstall();
 
@@ -287,17 +289,27 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
 
         {/* 1. Club Selector */}
         <div>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-2">
             <span className="text-xs font-semibold text-slate-700">
               1. Club Selected — <span className="text-[#0F1A14]">{selectedClub?.name}</span>
             </span>
-            <span className="text-xs font-mono text-slate-500 tabular-nums">
-              Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
-            </span>
+            {bag.length === 0 ? (
+              <button
+                type="button"
+                onClick={onOpenBagNfc}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
+              >
+                Pair NFC Tags →
+              </button>
+            ) : (
+              <span className="text-xs font-mono text-slate-500 tabular-nums">
+                Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-            {bag.map((club) => {
-              const active = club.id === selectedClubId;
+            {availableClubs.map((club) => {
+              const active = club.id === selectedClub?.id;
               return (
                 <button
                   key={club.id}

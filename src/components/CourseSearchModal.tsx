@@ -203,8 +203,17 @@ export const CourseSearchModal: React.FC<CourseSearchModalProps> = ({
 
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
           {errorMessage && (
-            <div className="p-4 m-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
-              {errorMessage}
+            <div className="p-4 m-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
+              <span>{errorMessage}</span>
+              {userPosition && (
+                <button
+                  type="button"
+                  onClick={() => void handleNearbySearch()}
+                  className="px-3 py-1.5 rounded-lg bg-amber-900 text-white font-semibold whitespace-nowrap shrink-0 hover:bg-amber-950 transition-colors"
+                >
+                  Retry
+                </button>
+              )}
             </div>
           )}
 

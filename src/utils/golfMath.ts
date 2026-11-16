@@ -1,5 +1,6 @@
 import {
   Club,
+  ClubCategory,
   DistanceUnit,
   HolePinData,
   HoleScoreState,
@@ -9,22 +10,40 @@ import {
   ShotLie,
 } from '../types/golf';
 
-export const DEFAULT_CLUB_BAG: Club[] = [
-  { id: 'dr', name: 'Driver', shortName: 'DR', category: 'wood', typicalYards: 255, nfcTagId: 'GP-TAG-DR-01' },
-  { id: '3w', name: '3 Wood', shortName: '3W', category: 'wood', typicalYards: 230, nfcTagId: 'GP-TAG-3W-02' },
+export interface ClubPreset {
+  id: string;
+  name: string;
+  shortName: string;
+  category: ClubCategory;
+  typicalYards: number;
+}
+
+export const CLUB_PRESETS: ClubPreset[] = [
+  { id: 'dr', name: 'Driver', shortName: 'D', category: 'wood', typicalYards: 255 },
+  { id: '3w', name: '3 Wood', shortName: '3W', category: 'wood', typicalYards: 230 },
   { id: '5w', name: '5 Wood', shortName: '5W', category: 'wood', typicalYards: 212 },
-  { id: '4h', name: '4 Hybrid', shortName: '4H', category: 'hybrid', typicalYards: 198, nfcTagId: 'GP-TAG-4H-03' },
-  { id: '5i', name: '5 Iron', shortName: '5i', category: 'iron', typicalYards: 185 },
-  { id: '6i', name: '6 Iron', shortName: '6i', category: 'iron', typicalYards: 173 },
-  { id: '7i', name: '7 Iron', shortName: '7i', category: 'iron', typicalYards: 161, nfcTagId: 'GP-TAG-7I-04' },
-  { id: '8i', name: '8 Iron', shortName: '8i', category: 'iron', typicalYards: 149 },
-  { id: '9i', name: '9 Iron', shortName: '9i', category: 'iron', typicalYards: 136 },
-  { id: 'pw', name: 'Pitching Wedge', shortName: 'PW', category: 'wedge', typicalYards: 122, nfcTagId: 'GP-TAG-PW-05' },
-  { id: 'gw', name: 'Gap Wedge (50°)', shortName: '50°', category: 'wedge', typicalYards: 106 },
-  { id: 'sw', name: 'Sand Wedge (56°)', shortName: '56°', category: 'wedge', typicalYards: 90, nfcTagId: 'GP-TAG-SW-06' },
-  { id: 'lw', name: 'Lob Wedge (60°)', shortName: '60°', category: 'wedge', typicalYards: 72 },
-  { id: 'pt', name: 'Putter', shortName: 'PT', category: 'putter', typicalYards: 10, nfcTagId: 'GP-TAG-PT-07' },
+  { id: '7w', name: '7 Wood', shortName: '7W', category: 'wood', typicalYards: 198 },
+  { id: '9w', name: '9 Wood', shortName: '9W', category: 'wood', typicalYards: 185 },
+  { id: '2h', name: '2 Hybrid', shortName: '2H', category: 'hybrid', typicalYards: 215 },
+  { id: '3h', name: '3 Hybrid', shortName: '3H', category: 'hybrid', typicalYards: 205 },
+  { id: '4h', name: '4 Hybrid', shortName: '4H', category: 'hybrid', typicalYards: 195 },
+  { id: '5h', name: '5 Hybrid', shortName: '5H', category: 'hybrid', typicalYards: 183 },
+  { id: '2i', name: '2 Iron', shortName: '2I', category: 'iron', typicalYards: 205 },
+  { id: '3i', name: '3 Iron', shortName: '3I', category: 'iron', typicalYards: 195 },
+  { id: '4i', name: '4 Iron', shortName: '4I', category: 'iron', typicalYards: 185 },
+  { id: '5i', name: '5 Iron', shortName: '5I', category: 'iron', typicalYards: 175 },
+  { id: '6i', name: '6 Iron', shortName: '6I', category: 'iron', typicalYards: 165 },
+  { id: '7i', name: '7 Iron', shortName: '7I', category: 'iron', typicalYards: 155 },
+  { id: '8i', name: '8 Iron', shortName: '8I', category: 'iron', typicalYards: 145 },
+  { id: '9i', name: '9 Iron', shortName: '9I', category: 'iron', typicalYards: 134 },
+  { id: 'pw', name: 'Pitching Wedge', shortName: 'PW', category: 'wedge', typicalYards: 122 },
+  { id: 'gw', name: 'Gap Wedge (50°)', shortName: 'GW', category: 'wedge', typicalYards: 108 },
+  { id: 'sw', name: 'Sand Wedge (56°)', shortName: 'SW', category: 'wedge', typicalYards: 92 },
+  { id: 'lw', name: 'Lob Wedge (60°)', shortName: 'LW', category: 'wedge', typicalYards: 74 },
+  { id: 'pt', name: 'Putter', shortName: 'PT', category: 'putter', typicalYards: 10 },
 ];
+
+export const DEFAULT_CLUB_BAG: Club[] = [];
 
 export const DEFAULT_PAR_LAYOUT: Array<{ par: number; yardage: number; handicap: number }> = [
   { par: 4, yardage: 405, handicap: 9 },

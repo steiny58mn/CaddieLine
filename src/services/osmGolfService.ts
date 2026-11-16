@@ -66,6 +66,153 @@ function mapCandidateToCourseInfo(item: UnifiedCourseResponseItem): CourseInfo {
   };
 }
 
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 10000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function queryDirectCourseDirectories(
+  text: string,
+  near?: LatLngLiteral | null,
+  radiusMeters = 45000
+): Promise<CourseInfo[]> {
+  const arcParams = new URLSearchParams({
+    category: 'Golf Course',
+    outFields: 'PlaceName,Place_addr,City,Region',
+    f: 'json',
+    maxLocations: '18',
+  });
+  if (text.trim()) arcParams.set('SingleLine', text.trim());
+  if (near) arcParams.set('location', `${near.lng.toFixed(5)},${near.lat.toFixed(5)}`);
+
+  const photonParams = new URLSearchParams({
+    q: text.trim()
+      ? text.toLowerCase().includes('golf')
+        ? text.trim()
+        : `${text.trim()} golf course`
+      : 'golf course',
+    limit: '18',
+  });
+  if (near) {
+    photonParams.set('lat', near.lat.toFixed(4));
+    photonParams.set('lon', near.lng.toFixed(4));
+  }
+
+  const [arcRes, photonRes] = await Promise.allSettled([
+    fetchJsonWithTimeout<{
+      candidates?: Array<{
+        address?: string;
+        score?: number;
+        location?: { x: number; y: number };
+        attributes?: { PlaceName?: string; Place_addr?: string; City?: string; Region?: string };
+      }>;
+    }>(
+      `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?${arcParams.toString()}`,
+      7500
+    ),
+    fetchJsonWithTimeout<{
+      features?: Array<{
+        geometry?: { coordinates?: [number, number] };
+        properties?: {
+          osm_id?: number;
+          osm_type?: string;
+          osm_value?: string;
+          name?: string;
+          city?: string;
+          state?: string;
+          country?: string;
+        };
+      }>;
+    }>(`https://photon.komoot.io/api/?${photonParams.toString()}`, 7500),
+  ]);
+
+  const items: UnifiedCourseResponseItem[] = [];
+
+  if (arcRes.status === 'fulfilled') {
+    for (const c of arcRes.value.candidates ?? []) {
+      if (!c.location) continue;
+      const name = (c.attributes?.PlaceName || c.address || '').trim();
+      if (!name) continue;
+      const addr =
+        c.attributes?.Place_addr ||
+        [c.attributes?.City, c.attributes?.Region].filter(Boolean).join(', ') ||
+        undefined;
+      items.push({
+        placeId: `arcgis_${c.location.y.toFixed(6)}_${c.location.x.toFixed(6)}`,
+        name,
+        formattedAddress: addr,
+        lat: Number(c.location.y.toFixed(6)),
+        lng: Number(c.location.x.toFixed(6)),
+        source: 'ArcGIS Golf Directory',
+        score: c.score ?? 80,
+      });
+    }
+  }
+
+  if (photonRes.status === 'fulfilled') {
+    for (const f of photonRes.value.features ?? []) {
+      const p = f.properties;
+      const coords = f.geometry?.coordinates;
+      if (!p || !coords || !p.name) continue;
+      const isGolf =
+        p.osm_value === 'golf_course' ||
+        p.name.toLowerCase().includes('golf') ||
+        p.name.toLowerCase().includes('country club');
+      if (!isGolf) continue;
+      const addr = [p.city, p.state, p.country].filter(Boolean).join(', ');
+      items.push({
+        placeId: p.osm_id ? `osm_p_${p.osm_type ?? 'n'}_${p.osm_id}` : `photon_${coords[1]}_${coords[0]}`,
+        name: p.name,
+        formattedAddress: addr || undefined,
+        lat: coords[1],
+        lng: coords[0],
+        source: 'OpenStreetMap',
+        score: 83,
+      });
+    }
+  }
+
+  if (arcRes.status === 'rejected' && photonRes.status === 'rejected') {
+    throw new Error('Unable to reach golf course directories');
+  }
+
+  const deduped: UnifiedCourseResponseItem[] = [];
+  for (const item of items) {
+    const dup = deduped.some(
+      (prev) => computeDistanceMeters({ lat: prev.lat, lng: prev.lng }, { lat: item.lat, lng: item.lng }) < 650
+    );
+    if (!dup) deduped.push(item);
+  }
+
+  if (near && !text.trim()) {
+    return deduped
+      .map((c) => {
+        const meters = computeDistanceMeters(near, { lat: c.lat, lng: c.lng });
+        const miles = (meters / 1609.344).toFixed(1);
+        return {
+          ...c,
+          distMeters: meters,
+          formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
+        };
+      })
+      .filter((c) => (c.distMeters ?? 0) <= radiusMeters * 1.35)
+      .sort((a, b) => (a.distMeters ?? 0) - (b.distMeters ?? 0))
+      .slice(0, 18)
+      .map(mapCandidateToCourseInfo);
+  }
+
+  return deduped.slice(0, 15).map(mapCandidateToCourseInfo);
+}
+
 export async function findNearbyCoursesOsm(
   center: LatLngLiteral,
   radiusMeters = 45000
@@ -75,12 +222,20 @@ export async function findNearbyCoursesOsm(
     lng: center.lng.toFixed(6),
     radius: String(radiusMeters),
   });
-  const res = await fetch(`/api/osm/nearby?${params.toString()}`);
-  if (!res.ok) {
-    throw new Error(`Nearby search failed (HTTP ${res.status})`);
+
+  try {
+    const data = await fetchJsonWithTimeout<{ courses?: UnifiedCourseResponseItem[] }>(
+      `/api/osm/nearby?${params.toString()}`,
+      10000
+    );
+    if (data.courses && data.courses.length > 0) {
+      return data.courses.map(mapCandidateToCourseInfo);
+    }
+  } catch (err) {
+    console.warn('Backend /api/osm/nearby unavailable, using direct directory fallback:', err);
   }
-  const { courses } = (await res.json()) as { courses?: UnifiedCourseResponseItem[] };
-  return (courses ?? []).map(mapCandidateToCourseInfo);
+
+  return queryDirectCourseDirectories('', center, radiusMeters);
 }
 
 export async function searchCoursesOsm(
@@ -104,13 +259,19 @@ export async function searchCoursesOsm(
     );
   }
 
-  const res = await fetch(`/api/osm/search?${params.toString()}`);
-  if (!res.ok) {
-    throw new Error(`Course search failed (HTTP ${res.status})`);
+  try {
+    const data = await fetchJsonWithTimeout<{ courses?: UnifiedCourseResponseItem[] }>(
+      `/api/osm/search?${params.toString()}`,
+      10000
+    );
+    if (data.courses && data.courses.length > 0) {
+      return data.courses.map(mapCandidateToCourseInfo);
+    }
+  } catch (err) {
+    console.warn('Backend /api/osm/search unavailable, using direct directory fallback:', err);
   }
 
-  const { courses } = (await res.json()) as { courses?: UnifiedCourseResponseItem[] };
-  return (courses ?? []).map(mapCandidateToCourseInfo);
+  return queryDirectCourseDirectories(trimmed, near);
 }
 
 function toLatLngs(points?: OverpassPoint[]): LatLngLiteral[] {

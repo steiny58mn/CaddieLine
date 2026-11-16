@@ -14,6 +14,8 @@ import {
   ShotRecord,
 } from './types/golf';
 import {
+  CLUB_PRESETS,
+  ClubPreset,
   DEFAULT_CLUB_BAG,
   computeDistanceYards,
   createInitialRoundState,
@@ -40,7 +42,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 const STORAGE_KEYS = {
   ROUND: 'caddieline_active_round_v1',
   SAVED_ROUNDS: 'caddieline_saved_rounds_v1',
-  BAG: 'caddieline_club_bag_v1',
+  BAG: 'caddieline_club_bag_v2',
   AUTO_NFC: 'caddieline_auto_nfc_v1',
 };
 
@@ -91,7 +93,7 @@ export default function App() {
   const [targetPin, setTargetPin] = useState<LatLngLiteral | null>(null);
 
   // NFC pairing & toast feedback
-  const [pairingClubId, setPairingClubId] = useState<string | null>(null);
+  const [pairingTarget, setPairingTarget] = useState<ClubPreset | null>(null);
   const [lastNfcFeedback, setLastNfcFeedback] = useState<string | null>(null);
 
   const geo = useGeolocation();
@@ -218,7 +220,8 @@ export default function App() {
       endLatLng?: LatLngLiteral;
       source: 'manual' | 'nfc' | 'map';
     }) => {
-      const club = bag.find((c) => c.id === params.clubId) ?? bag[0];
+      const pool = bag.length > 0 ? bag : CLUB_PRESETS;
+      const club = pool.find((c) => c.id === params.clubId) ?? pool[0];
       const lieMeta = getLieMeta(params.lie);
 
       setRound((prev) => {
@@ -264,10 +267,10 @@ export default function App() {
 
       // Suggest next club logically after logging a shot
       if (params.lie === 'green' || params.lie === 'holed') {
-        const putter = bag.find((c) => c.category === 'putter');
+        const putter = pool.find((c) => c.category === 'putter');
         if (putter) setSelectedClubId(putter.id);
       } else if (club.id === 'dr' || club.category === 'wood') {
-        const midIron = bag.find((c) => c.id === '7i') ?? bag[Math.min(5, bag.length - 1)];
+        const midIron = pool.find((c) => c.id === '7i') ?? pool[Math.min(5, pool.length - 1)];
         if (midIron) setSelectedClubId(midIron.id);
       }
       setManualDistanceYards('');
@@ -334,16 +337,32 @@ export default function App() {
   // GolfPad Web NFC Tag Handler
   const handleNfcTagDetected = useCallback(
     async (payload: NfcTapPayload) => {
-      // 1. Pairing Mode: bind scanned hardware tag UID to selected club
-      if (pairingClubId) {
-        setBag((prev) =>
-          prev.map((c) => (c.id === pairingClubId ? { ...c, nfcTagId: payload.tagId } : c))
-        );
-        const targetClub = bag.find((c) => c.id === pairingClubId);
+      // 1. Pairing Mode: bind scanned hardware tag UID to selected/preset club
+      if (pairingTarget) {
+        const upperTagId = payload.tagId.toUpperCase();
+        setBag((prev) => {
+          const exists = prev.some((c) => c.id === pairingTarget.id);
+          const clearedPrev = prev.map((c) =>
+            c.nfcTagId?.toUpperCase() === upperTagId ? { ...c, nfcTagId: undefined } : c
+          );
+          if (exists) {
+            return clearedPrev.map((c) =>
+              c.id === pairingTarget.id ? { ...c, nfcTagId: upperTagId } : c
+            );
+          }
+          return [
+            ...clearedPrev,
+            {
+              ...pairingTarget,
+              nfcTagId: upperTagId,
+            },
+          ];
+        });
+        setSelectedClubId((prevId) => (bag.some((c) => c.id === prevId) ? prevId : pairingTarget.id));
         setLastNfcFeedback(
-          `Paired NFC tag ${payload.tagId} to ${targetClub?.name ?? 'club'}.`
+          `Paired NFC tag ${upperTagId} to ${pairingTarget.name} (${pairingTarget.shortName}).`
         );
-        setPairingClubId(null);
+        setPairingTarget(null);
         return;
       }
 
@@ -419,10 +438,20 @@ export default function App() {
         );
       }
     },
-    [pairingClubId, bag, geo, autoLogOnNfc, commitShot]
+    [pairingTarget, bag, geo, autoLogOnNfc, commitShot]
   );
 
   const nfc = useWebNfc(handleNfcTagDetected);
+
+  const handleStartPairClub = useCallback(
+    (club: ClubPreset) => {
+      setPairingTarget(club);
+      if (nfc.status !== 'scanning') {
+        void nfc.startScan();
+      }
+    },
+    [nfc]
+  );
 
   const handleChangeHole = useCallback(
     (holeNumber: number) => {
@@ -808,13 +837,13 @@ export default function App() {
               nfcStatus={nfc.status}
               nfcError={nfc.errorMessage}
               lastNfcTap={nfc.lastTap}
-              pairingClubId={pairingClubId}
+              pairingTarget={pairingTarget}
               autoLogOnNfc={autoLogOnNfc}
               onChangeUnit={(unit) => setRound((prev) => ({ ...prev, unit }))}
               onToggleAutoLogOnNfc={setAutoLogOnNfc}
-              onStartNfcScan={() => void nfc.startScan()}
               onStopNfcScan={nfc.stopScan}
-              onStartPairingClub={setPairingClubId}
+              onStartPairClub={handleStartPairClub}
+              onCancelPairing={() => setPairingTarget(null)}
               onUpdateClub={(clubId, patch) =>
                 setBag((prev) => prev.map((c) => (c.id === clubId ? { ...c, ...patch } : c)))
               }

@@ -38,7 +38,9 @@ interface OverpassElement {
 }
 
 const geometryCache = new Map<string, { timestamp: number; elements: OverpassElement[]; source: string }>();
+const nearbyCache = new Map<string, { timestamp: number; courses: unknown[] }>();
 const CACHE_TTL_MS = 1000 * 60 * 30;
+const NEARBY_CACHE_TTL_MS = 1000 * 60 * 15;
 
 async function fetchWithTimeout(
   url: string,
@@ -54,7 +56,10 @@ async function fetchWithTimeout(
   }
 }
 
-async function queryOverpassServer(ql: string): Promise<{ elements: OverpassElement[]; endpoint: string }> {
+async function queryOverpassServer(
+  ql: string,
+  perEndpointTimeoutMs = 18000
+): Promise<{ elements: OverpassElement[]; endpoint: string }> {
   const errors: string[] = [];
 
   for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -70,7 +75,7 @@ async function queryOverpassServer(ql: string): Promise<{ elements: OverpassElem
           },
           body: `data=${encodeURIComponent(ql)}`,
         },
-        18000
+        perEndpointTimeoutMs
       );
 
       if (!res.ok) {
@@ -383,64 +388,137 @@ out geom;
       return;
     }
 
-    const ql = `
-[out:json][timeout:14];
+    const cacheKey = `${lat.toFixed(2)}_${lng.toFixed(2)}_${radius}`;
+    const cachedNearby = nearbyCache.get(cacheKey);
+    if (cachedNearby && Date.now() - cachedNearby.timestamp < NEARBY_CACHE_TTL_MS) {
+      res.json({ courses: cachedNearby.courses });
+      return;
+    }
+
+    try {
+      const ql = `
+[out:json][timeout:6];
 (
   nwr["leisure"="golf_course"](around:${radius},${lat.toFixed(6)},${lng.toFixed(6)});
 );
-out center 35;
+out center 30;
 `.trim();
 
-    const [arcResult, osmResult] = await Promise.allSettled([
-      queryArcGisGolfCourses('', { lat, lng }, 20),
-      queryOverpassServer(ql),
-    ]);
+      const photonParams = new URLSearchParams({
+        q: 'golf course',
+        lat: lat.toFixed(4),
+        lon: lng.toFixed(4),
+        limit: '18',
+      });
 
-    const combined: UnifiedCourseCandidate[] = [];
-    if (arcResult.status === 'fulfilled') {
-      combined.push(...arcResult.value);
-    }
+      const overpassWithCap = Promise.race([
+        queryOverpassServer(ql, 5500),
+        new Promise<{ elements: OverpassElement[]; endpoint: string }>((_, reject) =>
+          setTimeout(() => reject(new Error('Overpass nearby timeout')), 6500)
+        ),
+      ]);
 
-    if (osmResult.status === 'fulfilled') {
-      for (const el of osmResult.value.elements) {
-        const elLat = el.center?.lat ?? el.lat;
-        const elLng = el.center?.lon ?? el.lon;
-        if (elLat === undefined || elLng === undefined) continue;
-        const name = el.tags?.name?.trim();
-        if (!name) continue;
-        const addr = [
-          el.tags?.['addr:city'] || el.tags?.['addr:town'] || el.tags?.['addr:village'],
-          el.tags?.['addr:state'],
-        ]
-          .filter(Boolean)
-          .join(', ');
-        combined.push({
-          placeId: `osm_${el.type}_${el.id}`,
-          name,
-          formattedAddress: addr || undefined,
-          lat: elLat,
-          lng: elLng,
-          source: 'OpenStreetMap',
-          score: 85,
-        });
+      const [arcResult, photonResult, osmResult] = await Promise.allSettled([
+        queryArcGisGolfCourses('', { lat, lng }, 20),
+        fetchWithTimeout(
+          `https://photon.komoot.io/api/?${photonParams.toString()}`,
+          { headers: { 'User-Agent': OSM_USER_AGENT, Accept: 'application/json' } },
+          6000
+        ).then(async (r) => (r.ok ? r.json() : { features: [] })),
+        overpassWithCap,
+      ]);
+
+      const combined: UnifiedCourseCandidate[] = [];
+      if (arcResult.status === 'fulfilled') {
+        combined.push(...arcResult.value);
       }
+
+      if (photonResult.status === 'fulfilled') {
+        const features = (photonResult.value as {
+          features?: Array<{
+            geometry?: { coordinates?: [number, number] };
+            properties?: {
+              osm_id?: number;
+              osm_type?: string;
+              osm_value?: string;
+              name?: string;
+              city?: string;
+              state?: string;
+              country?: string;
+            };
+          }>;
+        })?.features;
+        for (const f of features ?? []) {
+          const p = f.properties;
+          const coords = f.geometry?.coordinates;
+          if (!p || !coords || !p.name) continue;
+          const isGolf =
+            p.osm_value === 'golf_course' ||
+            p.name.toLowerCase().includes('golf') ||
+            p.name.toLowerCase().includes('country club');
+          if (!isGolf) continue;
+          const addr = [p.city, p.state, p.country].filter(Boolean).join(', ');
+          combined.push({
+            placeId: p.osm_id ? `osm_p_${p.osm_type ?? 'n'}_${p.osm_id}` : `photon_${coords[1]}_${coords[0]}`,
+            name: p.name,
+            formattedAddress: addr || undefined,
+            lat: coords[1],
+            lng: coords[0],
+            source: 'OpenStreetMap',
+            score: 83,
+          });
+        }
+      }
+
+      if (osmResult.status === 'fulfilled') {
+        for (const el of osmResult.value.elements) {
+          const elLat = el.center?.lat ?? el.lat;
+          const elLng = el.center?.lon ?? el.lon;
+          if (elLat === undefined || elLng === undefined) continue;
+          const name = el.tags?.name?.trim();
+          if (!name) continue;
+          const addr = [
+            el.tags?.['addr:city'] || el.tags?.['addr:town'] || el.tags?.['addr:village'],
+            el.tags?.['addr:state'],
+          ]
+            .filter(Boolean)
+            .join(', ');
+          combined.push({
+            placeId: `osm_${el.type}_${el.id}`,
+            name,
+            formattedAddress: addr || undefined,
+            lat: elLat,
+            lng: elLng,
+            source: 'OpenStreetMap',
+            score: 86,
+          });
+        }
+      }
+
+      const deduped = deduplicateCourses(combined)
+        .map((c) => {
+          const meters = haversineMeters(lat, lng, c.lat, c.lng);
+          const miles = (meters / 1609.344).toFixed(1);
+          return {
+            ...c,
+            distMeters: meters,
+            formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
+          };
+        })
+        .filter((c) => c.distMeters <= radius * 1.35)
+        .sort((a, b) => a.distMeters - b.distMeters)
+        .slice(0, 18);
+
+      if (deduped.length > 0) {
+        nearbyCache.set(cacheKey, { timestamp: Date.now(), courses: deduped });
+      }
+
+      res.json({ courses: deduped });
+    } catch (err) {
+      res.status(502).json({
+        error: `Nearby golf course search failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
-
-    const deduped = deduplicateCourses(combined)
-      .map((c) => {
-        const meters = haversineMeters(lat, lng, c.lat, c.lng);
-        const miles = (meters / 1609.344).toFixed(1);
-        return {
-          ...c,
-          distMeters: meters,
-          formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
-        };
-      })
-      .filter((c) => c.distMeters <= radius * 1.35)
-      .sort((a, b) => a.distMeters - b.distMeters)
-      .slice(0, 18);
-
-    res.json({ courses: deduped });
   });
 
   app.get('/api/osm/search', async (req, res) => {
