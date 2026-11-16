@@ -87,8 +87,8 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
   onSelectHole,
   onOverrideHoleScore,
 }) => {
-  const sumPar = holeNumbers.reduce((acc, n) => acc + holes[n].par, 0);
-  const sumYards = holeNumbers.reduce((acc, n) => acc + holes[n].yardage, 0);
+  const sumPar = holeNumbers.reduce((acc, n) => acc + (holes[n]?.par ?? 4), 0);
+  const sumYards = holeNumbers.reduce((acc, n) => acc + (holes[n]?.yardage ?? 0), 0);
   const sumScore = holeNumbers.reduce((acc, n) => acc + getHoleStrokes(scores[n]), 0);
   const sumPutts = holeNumbers.reduce((acc, n) => acc + getEffectivePutts(scores[n]), 0);
 
@@ -133,7 +133,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
               </td>
               {holeNumbers.map((num) => (
                 <td key={num} className="py-2 px-1 font-mono text-slate-500 tabular-nums">
-                  {formatDistanceValue(holes[num].yardage, unit)}
+                  {formatDistanceValue(holes[num]?.yardage, unit)}
                 </td>
               ))}
               <td className="py-2 px-3 font-mono font-semibold text-slate-700 bg-slate-50 tabular-nums">
@@ -145,7 +145,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
               <td className="py-2 px-3 text-left font-medium text-slate-600">Par</td>
               {holeNumbers.map((num) => (
                 <td key={num} className="py-2 px-1 font-mono font-semibold text-slate-700 tabular-nums">
-                  {holes[num].par}
+                  {holes[num]?.par ?? 4}
                 </td>
               ))}
               <td className="py-2 px-3 font-mono font-bold text-[#0F1A14] bg-slate-50 tabular-nums">
@@ -157,7 +157,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
               <td className="py-2 px-3 text-left font-medium text-slate-500">Hcp</td>
               {holeNumbers.map((num) => (
                 <td key={num} className="py-2 px-1 font-mono text-slate-400 tabular-nums">
-                  {holes[num].handicap}
+                  {holes[num]?.handicap ?? '—'}
                 </td>
               ))}
               <td className="py-2 px-3 font-mono text-slate-400 bg-slate-50">—</td>
@@ -175,7 +175,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
                       className="inline-flex items-center justify-center rounded-lg hover:bg-slate-100 p-0.5 transition-colors"
                       title={`Jump to Hole ${num}`}
                     >
-                      <ScoreSymbol strokes={strokes} par={holes[num].par} />
+                      <ScoreSymbol strokes={strokes} par={holes[num]?.par ?? 4} />
                     </button>
                   </td>
                 );
@@ -203,8 +203,8 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
             <tr>
               <td className="py-2 px-3 text-left font-medium text-slate-500">FIR / GIR</td>
               {holeNumbers.map((num) => {
-                const fir = getHoleFairwayStatus(scores[num], holes[num].par);
-                const gir = getHoleGIR(scores[num], holes[num].par);
+                const fir = getHoleFairwayStatus(scores[num], holes[num]?.par ?? 4);
+                const gir = getHoleGIR(scores[num], holes[num]?.par ?? 4);
                 const played = isHolePlayed(scores[num]);
                 return (
                   <td key={num} className="py-2 px-1 font-mono text-[11px] text-slate-600">
@@ -221,7 +221,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
                 );
               })}
               <td className="py-2 px-3 font-mono text-[11px] text-slate-500 bg-slate-50">
-                {holeNumbers.filter((n) => getHoleGIR(scores[n], holes[n].par)).length} GIR
+                {holeNumbers.filter((n) => getHoleGIR(scores[n], holes[n]?.par ?? 4)).length} GIR
               </td>
             </tr>
 
@@ -266,17 +266,17 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
   const allHoles = Array.from({ length: 18 }, (_, i) => i + 1);
   const playedHoles = allHoles.filter((n) => isHolePlayed(round.scores[n]));
   const totalStrokes = allHoles.reduce((acc, n) => acc + getHoleStrokes(round.scores[n]), 0);
-  const playedPar = playedHoles.reduce((acc, n) => acc + round.holes[n].par, 0);
-  const totalPar = allHoles.reduce((acc, n) => acc + round.holes[n].par, 0);
+  const playedPar = playedHoles.reduce((acc, n) => acc + (round.holes[n]?.par ?? 4), 0);
+  const totalPar = allHoles.reduce((acc, n) => acc + (round.holes[n]?.par ?? 4), 0);
   const relativeToPar = totalStrokes - playedPar;
   const totalPutts = allHoles.reduce((acc, n) => acc + getEffectivePutts(round.scores[n]), 0);
   const totalPenalties = allHoles.reduce((acc, n) => acc + getHolePenalties(round.scores[n]), 0);
 
-  const firEligible = playedHoles.filter((n) => round.holes[n].par > 3);
+  const firEligible = playedHoles.filter((n) => (round.holes[n]?.par ?? 4) > 3);
   const firHits = firEligible.filter(
-    (n) => getHoleFairwayStatus(round.scores[n], round.holes[n].par) === 'hit'
+    (n) => getHoleFairwayStatus(round.scores[n], round.holes[n]?.par ?? 4) === 'hit'
   );
-  const girHits = playedHoles.filter((n) => getHoleGIR(round.scores[n], round.holes[n].par));
+  const girHits = playedHoles.filter((n) => getHoleGIR(round.scores[n], round.holes[n]?.par ?? 4));
 
   const availableTees = round.course?.availableTees ?? [];
   const activeTee =

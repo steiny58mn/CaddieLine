@@ -6,7 +6,7 @@ import {
   HolePinData,
 } from '../types/golf';
 
-const GCA_MATCH_CACHE_PREFIX = 'caddieline_gca_match_v1_';
+const GCA_MATCH_CACHE_PREFIX = 'caddieline_gca_match_v2_';
 const GCA_MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 interface CachedMatchEntry {
@@ -71,34 +71,166 @@ export async function fetchGolfCourseMatch(course: CourseInfo): Promise<GolfCour
         lng: course.location.lng,
       }),
     });
-    if (!res.ok) {
-      return { configured: false, matches: [] };
+    if (res.ok) {
+      const data = (await res.json()) as {
+        configured?: boolean;
+        matches?: GolfCourseDetail[];
+      };
+      const configured = Boolean(data.configured ?? true);
+      const matches = Array.isArray(data.matches) ? data.matches : [];
+      if (matches.length > 0) {
+        writeCachedMatch(baseKey, matches);
+      }
+      return { configured, matches };
     }
-    const data = (await res.json()) as {
-      configured?: boolean;
-      matches?: GolfCourseDetail[];
-    };
-    const configured = Boolean(data.configured);
-    const matches = Array.isArray(data.matches) ? data.matches : [];
-    if (configured && matches.length > 0) {
-      writeCachedMatch(baseKey, matches);
-    }
-    return { configured, matches };
-  } catch {
-    return { configured: false, matches: [] };
+  } catch (err) {
+    console.warn('Backend /api/golfcourse/match failed, trying direct OpenGolfAPI:', err);
   }
+
+  // Direct client fallback to OpenGolfAPI (keyless, 32k+ courses)
+  try {
+    const cleanName = (course.clubName || course.name)
+      .split('—')[0]
+      .replace(/\b(golf\s*(course|club|links)|country\s*club|resort)\b/gi, '')
+      .trim();
+    const queryTerm = cleanName.length >= 3 ? cleanName : course.name.split('—')[0].trim();
+    if (queryTerm) {
+      const ogaRes = await fetch(
+        `https://api.opengolfapi.org/v1/courses/search?q=${encodeURIComponent(queryTerm)}`
+      );
+      if (ogaRes.ok) {
+        const ogaData = (await ogaRes.json()) as {
+          courses?: Array<{
+            id: string;
+            name: string;
+            course_name?: string;
+            latitude?: number;
+            longitude?: number;
+            city?: string;
+            state?: string;
+            scorecard?: Array<{ hole: number; par: number }>;
+          }>;
+        };
+        const hits = ogaData.courses ?? [];
+        if (hits.length > 0) {
+          const directDetails = await Promise.all(
+            hits.slice(0, 3).map(async (h) => fetchGolfCourseDetail(`oga_${h.id}`))
+          );
+          const validMatches = directDetails.filter((d): d is GolfCourseDetail => Boolean(d));
+          if (validMatches.length > 0) {
+            writeCachedMatch(baseKey, validMatches);
+            return { configured: true, matches: validMatches };
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore fallback errors
+  }
+
+  return { configured: true, matches: [] };
 }
 
 export async function fetchGolfCourseDetail(id: string): Promise<GolfCourseDetail | null> {
   if (!id) return null;
+
+  // 1. Try local server endpoint
   try {
     const res = await fetch(`/api/golfcourse/course/${encodeURIComponent(id)}`);
-    if (!res.ok) return null;
-    const data = (await res.json()) as { course?: GolfCourseDetail };
-    return data.course ?? null;
+    if (res.ok) {
+      const data = (await res.json()) as { course?: GolfCourseDetail };
+      if (data.course) return data.course;
+    }
   } catch {
-    return null;
+    // Continue to direct OpenGolfAPI
   }
+
+  // 2. Direct client fallback for OpenGolfAPI
+  const rawId = id.replace(/^oga_/, '').trim();
+  if (rawId) {
+    try {
+      const [cRes, hRes] = await Promise.all([
+        fetch(`https://api.opengolfapi.org/v1/courses/${encodeURIComponent(rawId)}`),
+        fetch(`https://api.opengolfapi.org/v1/courses/${encodeURIComponent(rawId)}/holes`),
+      ]);
+      if (cRes.ok) {
+        const c = (await cRes.json()) as {
+          id: string;
+          name: string;
+          course_name?: string;
+          latitude?: number;
+          longitude?: number;
+          city?: string;
+          state?: string;
+          address?: string;
+          scorecard?: Array<{ hole: number; par: number }>;
+        };
+        const hData = hRes.ok
+          ? ((await hRes.json()) as {
+              holes?: Array<{
+                number: number;
+                par: number;
+                handicap_index?: number;
+                yardages?: Record<string, number>;
+              }>;
+            })
+          : undefined;
+
+        const teeNames = new Set<string>();
+        for (const h of hData?.holes ?? []) {
+          if (h.yardages) {
+            for (const [k, yds] of Object.entries(h.yardages)) {
+              if (typeof yds === 'number' && yds > 0) teeNames.add(k);
+            }
+          }
+        }
+
+        const tees: GolfCourseTeeSet[] = [];
+        for (const tKey of teeNames) {
+          const teeHoles: GolfCourseTeeHole[] = (hData?.holes ?? []).map((h) => ({
+            holeNumber: h.number,
+            par: h.par || 4,
+            yardage: h.yardages?.[tKey] ?? 0,
+            handicap: h.handicap_index ?? h.number,
+          }));
+          const totalYards = teeHoles.reduce((acc, h) => acc + h.yardage, 0);
+          const parTotal = teeHoles.reduce((acc, h) => acc + h.par, 0);
+          const isFemale = tKey.toLowerCase() === 'red' || tKey.toLowerCase().includes('forward');
+          const capName = tKey.charAt(0).toUpperCase() + tKey.slice(1);
+          tees.push({
+            id: `oga_${c.id}_${tKey}`,
+            gender: isFemale ? 'female' : 'male',
+            teeName: capName,
+            totalYards: totalYards > 0 ? totalYards : undefined,
+            totalMeters: totalYards > 0 ? Math.round(totalYards / 1.0936133) : undefined,
+            numberOfHoles: teeHoles.length,
+            parTotal,
+            holes: teeHoles,
+          });
+        }
+
+        return {
+          id: `oga_${c.id}`,
+          clubName: c.name,
+          courseName: c.course_name || c.name,
+          displayName: c.name,
+          address: c.address,
+          city: c.city,
+          state: c.state,
+          country: 'USA',
+          location:
+            c.latitude !== undefined && c.longitude !== undefined
+              ? { lat: Number(c.latitude), lng: Number(c.longitude) }
+              : undefined,
+          tees,
+        };
+      }
+    } catch {
+      // Return null on failure
+    }
+  }
+
+  return null;
 }
 
 export function matchSubCourseNameToGca(
@@ -134,8 +266,10 @@ export function pickDefaultTee(tees: GolfCourseTeeSet[]): GolfCourseTeeSet | und
   const maleTees = pool.filter((t) => t.gender === 'male');
   const candidatePool = maleTees.length > 0 ? maleTees : pool;
 
-  // Prefer classic daily-play tees (White / Blue / Regular / Middle) before extremes
-  const whiteMatch = candidatePool.find((t) => /\b(white|regular|middle|member|men)\b/i.test(t.teeName));
+  // Prefer classic daily-play tees (White / Blue / Regular / Middle / Standard)
+  const whiteMatch = candidatePool.find((t) =>
+    /\b(white|regular|middle|standard|member|men)\b/i.test(t.teeName)
+  );
   if (whiteMatch) return whiteMatch;
 
   const blueMatch = candidatePool.find((t) => /\b(blue|back|combo)\b/i.test(t.teeName));

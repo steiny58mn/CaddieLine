@@ -14,6 +14,7 @@ import {
   findNearbyCoursesOsm,
   searchCoursesOsm,
   summarizeOsmGeometry,
+  isDiscGolfCourse,
 } from '../services/osmGolfService';
 import {
   combineSubCourseTees,
@@ -148,10 +149,11 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
       const summary = summarizeOsmGeometry(filtered);
       const tees = loop.gcaDetail?.tees ?? [];
       const defaultTee = pickDefaultTee(tees);
+      const apiSource = loop.gcaDetail?.id?.startsWith('oga_') ? 'OpenGolfAPI' : 'GolfCourseAPI';
       const attributions = Array.from(
         new Set([
           ...(course.attributions ?? []),
-          ...(tees.length > 0 ? ['GolfCourseAPI'] : []),
+          ...(tees.length > 0 ? [apiSource] : []),
           'OpenStreetMap',
         ])
       );
@@ -194,10 +196,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
           ? combineSubCourseTees(front.gcaDetail, back.gcaDetail)
           : front.gcaDetail?.tees ?? back.gcaDetail?.tees ?? [];
       const defaultTee = pickDefaultTee(combinedTees);
+      const apiSource =
+        front.gcaDetail?.id?.startsWith('oga_') || back.gcaDetail?.id?.startsWith('oga_')
+          ? 'OpenGolfAPI'
+          : 'GolfCourseAPI';
       const attributions = Array.from(
         new Set([
           ...(course.attributions ?? []),
-          ...(combinedTees.length > 0 ? ['GolfCourseAPI'] : []),
+          ...(combinedTees.length > 0 ? [apiSource] : []),
           'OpenStreetMap',
         ])
       );
@@ -231,9 +237,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
         const gcaMatches =
           gcaResult.status === 'fulfilled' ? gcaResult.value.matches : [];
 
-        if (geomResult.status === 'rejected' && gcaMatches.length === 0) {
-          throw new Error('Both OSM and GolfCourseAPI failed');
-        }
+
 
         const geometry: OsmCourseGeometry =
           geomResult.status === 'fulfilled'
@@ -328,10 +332,11 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
         const tees = matchedGca?.tees ?? [];
         const defaultTee = pickDefaultTee(tees);
         const summary = summarizeOsmGeometry(geometry);
+        const apiSource = matchedGca?.id?.startsWith('oga_') ? 'OpenGolfAPI' : 'GolfCourseAPI';
         const attributions = Array.from(
           new Set([
             ...(course.attributions ?? []),
-            ...(tees.length > 0 ? ['GolfCourseAPI'] : []),
+            ...(tees.length > 0 ? [apiSource] : []),
             'OpenStreetMap',
           ])
         );
@@ -349,8 +354,24 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
           },
           geometry
         );
-      } catch {
-        setErrorMessage(`Could not load hole & scorecard data for ${course.name}. Please try again.`);
+      } catch (err) {
+        console.error('Failed to load course details, attempting fallback:', err);
+        try {
+          const fallbackGeometry: OsmCourseGeometry = {
+            courseId: course.placeId.split('__')[0],
+            fetchedAt: Date.now(),
+            holes: [],
+            greens: [],
+            bunkers: [],
+            waters: [],
+            fairways: [],
+            tees: [],
+          };
+          onSelectCourse(course, fallbackGeometry);
+        } catch (innerErr) {
+          console.error('Critical failure starting round:', innerErr);
+          setErrorMessage(`Could not load hole & scorecard data for ${course.name}. Please try again.`);
+        }
       } finally {
         setLoadingCourseId(null);
       }
@@ -365,8 +386,9 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   }, [userPosition, hasSearched, results.length, handleNearbySearch]);
 
   const sortedResults = useMemo(() => {
-    if (!userPosition || results.length <= 1) return results;
-    return [...results].sort(
+    const nonDisc = results.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress));
+    if (!userPosition || nonDisc.length <= 1) return nonDisc;
+    return [...nonDisc].sort(
       (a, b) =>
         computeDistanceMeters(userPosition, a.location) -
         computeDistanceMeters(userPosition, b.location)

@@ -42,9 +42,13 @@ const geometryCache = new Map<string, { timestamp: number; elements: OverpassEle
 const nearbyCache = new Map<string, { timestamp: number; courses: unknown[] }>();
 const golfCourseSearchCache = new Map<string, { timestamp: number; courses: ServerGolfCourseDetail[] }>();
 const golfCourseDetailCache = new Map<string, { timestamp: number; course: ServerGolfCourseDetail }>();
+const openGolfSearchCache = new Map<string, { timestamp: number; courses: ServerGolfCourseDetail[] }>();
+const openGolfDetailCache = new Map<string, { timestamp: number; course: ServerGolfCourseDetail }>();
+
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const NEARBY_CACHE_TTL_MS = 1000 * 60 * 15;
 const GOLFCOURSE_CACHE_TTL_MS = 1000 * 60 * 60;
+const OPENGOLF_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
 
 interface ServerGolfCourseTeeHole {
   holeNumber: number;
@@ -85,8 +89,212 @@ interface ServerGolfCourseDetail {
   tees: ServerGolfCourseTeeSet[];
 }
 
+interface OpenGolfCourseItem {
+  id: string;
+  name: string;
+  course_name?: string;
+  latitude?: number;
+  longitude?: number;
+  state?: string;
+  city?: string;
+  type?: string;
+  par?: number;
+  phone?: string;
+  website?: string;
+  address?: string;
+  scorecard?: Array<{ hole: number; par: number }>;
+}
+
+interface OpenGolfHoleItem {
+  number: number;
+  par: number;
+  handicap_index?: number;
+  yardages?: Record<string, number>;
+}
+
 function getGolfCourseApiKey(): string {
   return (process.env.GOLFCOURSE_API_KEY || process.env.GOLF_COURSE_API_KEY || '').trim();
+}
+
+function isDiscGolfCourse(...parts: Array<string | undefined | null>): boolean {
+  const text = parts.filter(Boolean).join(' ').toLowerCase();
+  if (!text) return false;
+  return /\b(disc\s*[-/]?\s*golf|disk\s*[-/]?\s*golf|discgolf|diskgolf|frisbee(\s*golf)?|frolf|disc\s*park|disc\s*course|dgc|d\.g\.c\.|dg\s*course|pdga|foot\s*golf|footgolf|soccer\s*golf|mini\s*[-/]?\s*golf|miniature\s*golf|putt\s*[-/]?\s*putt|crazy\s*golf)\b/i.test(text);
+}
+
+function getTeeColor(teeName: string): string | undefined {
+  const norm = teeName.toLowerCase();
+  if (norm.includes('black')) return '#1e293b';
+  if (norm.includes('blue')) return '#2563eb';
+  if (norm.includes('white') || norm.includes('regular') || norm.includes('standard')) return '#f8fafc';
+  if (norm.includes('gold') || norm.includes('yellow')) return '#eab308';
+  if (norm.includes('red') || norm.includes('forward')) return '#ef4444';
+  if (norm.includes('green')) return '#16a34a';
+  if (norm.includes('silver') || norm.includes('gray')) return '#94a3b8';
+  return undefined;
+}
+
+function convertOpenGolfToDetail(
+  course: OpenGolfCourseItem,
+  holes?: OpenGolfHoleItem[]
+): ServerGolfCourseDetail {
+  const courseId = `oga_${course.id}`;
+  const teeNames = new Set<string>();
+  for (const h of holes ?? []) {
+    if (h.yardages && typeof h.yardages === 'object') {
+      for (const [key, yds] of Object.entries(h.yardages)) {
+        if (typeof yds === 'number' && yds > 0) {
+          teeNames.add(key);
+        }
+      }
+    }
+  }
+
+  const tees: ServerGolfCourseTeeSet[] = [];
+  for (const tKey of teeNames) {
+    const teeHoles: ServerGolfCourseTeeHole[] = (holes ?? []).map((h) => ({
+      holeNumber: h.number,
+      par: h.par || 4,
+      yardage: h.yardages?.[tKey] ?? 0,
+      handicap: h.handicap_index ?? h.number,
+    }));
+    const totalYards = teeHoles.reduce((acc, h) => acc + h.yardage, 0);
+    const parTotal = teeHoles.reduce((acc, h) => acc + h.par, 0);
+    const isFemale = tKey.toLowerCase() === 'red' || tKey.toLowerCase().includes('forward');
+    const capName = tKey.charAt(0).toUpperCase() + tKey.slice(1);
+    tees.push({
+      id: `${courseId}_${tKey}`,
+      gender: isFemale ? 'female' : 'male',
+      teeName: capName,
+      color: getTeeColor(tKey),
+      totalYards: totalYards > 0 ? totalYards : undefined,
+      totalMeters: totalYards > 0 ? Math.round(totalYards / 1.0936133) : undefined,
+      numberOfHoles: teeHoles.length,
+      parTotal,
+      holes: teeHoles,
+    });
+  }
+
+  if (tees.length === 0) {
+    const rawHoles =
+      holes && holes.length > 0
+        ? holes.map((h) => ({
+            holeNumber: h.number,
+            par: h.par || 4,
+            yardage: 0,
+            handicap: h.handicap_index ?? h.number,
+          }))
+        : (course.scorecard ?? []).map((s) => ({
+            holeNumber: s.hole,
+            par: s.par || 4,
+            yardage: 0,
+            handicap: s.hole,
+          }));
+
+    if (rawHoles.length > 0) {
+      tees.push({
+        id: `${courseId}_std`,
+        gender: 'male',
+        teeName: 'Standard',
+        numberOfHoles: rawHoles.length,
+        parTotal: rawHoles.reduce((acc, h) => acc + h.par, 0),
+        holes: rawHoles,
+      });
+    }
+  }
+
+  return {
+    id: courseId,
+    clubName: course.name,
+    courseName: course.course_name || course.name,
+    displayName: course.name,
+    address: course.address,
+    city: course.city,
+    state: course.state,
+    country: 'USA',
+    location:
+      course.latitude !== undefined &&
+      course.longitude !== undefined &&
+      !Number.isNaN(course.latitude) &&
+      !Number.isNaN(course.longitude)
+        ? { lat: Number(course.latitude), lng: Number(course.longitude) }
+        : undefined,
+    tees,
+  };
+}
+
+async function searchOpenGolfApi(query: string): Promise<ServerGolfCourseDetail[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const cacheKey = trimmed.toLowerCase();
+  const cached = openGolfSearchCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < OPENGOLF_CACHE_TTL_MS) {
+    return cached.courses;
+  }
+
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.opengolfapi.org/v1/courses/search?q=${encodeURIComponent(trimmed)}`,
+      { headers: { Accept: 'application/json' } },
+      7500
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as { courses?: OpenGolfCourseItem[] };
+    const courses = (data.courses ?? [])
+      .filter((c) => !isDiscGolfCourse(c.name, c.course_name, c.city, c.state))
+      .map((c) => convertOpenGolfToDetail(c));
+
+    if (courses.length > 0) {
+      openGolfSearchCache.set(cacheKey, { timestamp: Date.now(), courses });
+      for (const c of courses) {
+        if (!openGolfDetailCache.has(c.id)) {
+          openGolfDetailCache.set(c.id, { timestamp: Date.now(), course: c });
+        }
+      }
+    }
+    return courses;
+  } catch {
+    return [];
+  }
+}
+
+async function fetchOpenGolfDetail(id: string): Promise<ServerGolfCourseDetail | null> {
+  const rawId = id.replace(/^oga_/, '').trim();
+  if (!rawId) return null;
+
+  const cacheKey = `oga_${rawId}`;
+  const cached = openGolfDetailCache.get(cacheKey);
+  if (
+    cached &&
+    cached.course.tees.some((t) => t.holes.length > 0) &&
+    Date.now() - cached.timestamp < OPENGOLF_CACHE_TTL_MS
+  ) {
+    return cached.course;
+  }
+
+  try {
+    const [cRes, hRes] = await Promise.all([
+      fetchWithTimeout(
+        `https://api.opengolfapi.org/v1/courses/${encodeURIComponent(rawId)}`,
+        { headers: { Accept: 'application/json' } },
+        8000
+      ),
+      fetchWithTimeout(
+        `https://api.opengolfapi.org/v1/courses/${encodeURIComponent(rawId)}/holes`,
+        { headers: { Accept: 'application/json' } },
+        8000
+      ),
+    ]);
+
+    if (!cRes.ok) return null;
+    const courseData = (await cRes.json()) as OpenGolfCourseItem;
+    const holesData = hRes.ok ? ((await hRes.json()) as { holes?: OpenGolfHoleItem[] }) : undefined;
+    const detail = convertOpenGolfToDetail(courseData, holesData?.holes);
+    openGolfDetailCache.set(cacheKey, { timestamp: Date.now(), course: detail });
+    return detail;
+  } catch {
+    return cached?.course ?? null;
+  }
 }
 
 function normalizeGolfCourseRecord(raw: Record<string, unknown>): ServerGolfCourseDetail | null {
@@ -194,7 +402,7 @@ async function fetchWithTimeout(
 
 async function queryOverpassServer(
   ql: string,
-  perEndpointTimeoutMs = 18000
+  perEndpointTimeoutMs = 6000
 ): Promise<{ elements: OverpassElement[]; endpoint: string }> {
   const errors: string[] = [];
 
@@ -240,7 +448,6 @@ async function queryOverpassServer(
   throw new Error(errors.join(' | '));
 }
 
-// Fallback: fetch raw OSM v0.6 map.json tiles directly from openstreetmap.org and assemble way/relation geometries
 async function fetchViaOsmMapApi(lat: number, lng: number): Promise<OverpassElement[]> {
   const halfSpanLat = 0.0175;
   const cosLat = Math.max(0.25, Math.cos((lat * Math.PI) / 180));
@@ -283,7 +490,7 @@ async function fetchViaOsmMapApi(lat: number, lng: number): Promise<OverpassElem
           }
         }
       } catch {
-        // Ignore single tile failure so remaining tiles still render
+        // Ignore single tile failure
       }
     })
   );
@@ -383,7 +590,7 @@ out geom;
         return;
       }
       throw new Error('Overpass returned 0 golf elements');
-    } catch (overpassErr) {
+    } catch {
       try {
         const elements = await fetchViaOsmMapApi(lat, lng);
         if (elements.length > 0) {
@@ -395,10 +602,9 @@ out geom;
         }
         res.json({ elements, source: 'openstreetmap-v0.6' });
         return;
-      } catch (fallbackErr) {
-        const msg =
-          overpassErr instanceof Error ? overpassErr.message : String(fallbackErr);
-        res.status(502).json({ error: `OSM geometry unavailable: ${msg}` });
+      } catch {
+        // Return 200 with empty elements instead of 502 so client continues gracefully
+        res.json({ elements: [], source: 'empty-fallback' });
       }
     }
   });
@@ -442,7 +648,8 @@ out geom;
       const data = (await res.json()) as { courses?: Array<Record<string, unknown>> };
       const courses = (data.courses ?? [])
         .map(normalizeGolfCourseRecord)
-        .filter((c): c is ServerGolfCourseDetail => Boolean(c));
+        .filter((c): c is ServerGolfCourseDetail => Boolean(c))
+        .filter((c) => !isDiscGolfCourse(c.displayName, c.clubName, c.courseName));
       if (courses.length > 0) {
         golfCourseSearchCache.set(cacheKey, { timestamp: Date.now(), courses });
         for (const c of courses) {
@@ -493,41 +700,51 @@ out geom;
   }
 
   app.get('/api/golfcourse/status', (_req, res) => {
-    res.json({ configured: Boolean(getGolfCourseApiKey()) });
+    res.json({
+      configured: true,
+      openGolfApi: true,
+      golfCourseApi: Boolean(getGolfCourseApiKey()),
+    });
   });
 
   app.get('/api/golfcourse/search', async (req, res) => {
     const q = String(req.query.q ?? '').trim();
-    const configured = Boolean(getGolfCourseApiKey());
-    if (!configured || !q) {
-      res.json({ configured, courses: [] });
+    if (!q) {
+      res.json({ configured: true, courses: [] });
       return;
     }
-    const courses = await searchGolfCourseApi(q);
-    res.json({ configured, courses });
+
+    // Query OpenGolfAPI first (keyless, 32k+ courses), plus GolfCourseAPI if configured
+    const [ogaCourses, gcaCourses] = await Promise.all([
+      searchOpenGolfApi(q),
+      getGolfCourseApiKey() ? searchGolfCourseApi(q) : Promise.resolve([]),
+    ]);
+
+    const combined = [...ogaCourses, ...gcaCourses];
+    res.json({ configured: true, courses: combined });
   });
 
   app.get('/api/golfcourse/course/:id', async (req, res) => {
-    const configured = Boolean(getGolfCourseApiKey());
-    if (!configured) {
-      res.status(503).json({ error: 'GolfCourseAPI key not configured on server' });
+    const id = req.params.id;
+    if (id.startsWith('oga_')) {
+      const course = await fetchOpenGolfDetail(id);
+      if (!course) {
+        res.status(404).json({ error: 'Course not found in OpenGolfAPI' });
+        return;
+      }
+      res.json({ course });
       return;
     }
-    const course = await fetchGolfCourseApiDetail(req.params.id);
+
+    const course = (await fetchGolfCourseApiDetail(id)) ?? (await fetchOpenGolfDetail(id));
     if (!course) {
-      res.status(404).json({ error: 'Course not found in GolfCourseAPI' });
+      res.status(404).json({ error: 'Course not found' });
       return;
     }
     res.json({ course });
   });
 
   app.post('/api/golfcourse/match', async (req, res) => {
-    const configured = Boolean(getGolfCourseApiKey());
-    if (!configured) {
-      res.json({ configured: false, matches: [] });
-      return;
-    }
-
     const name = String(req.body?.name ?? '').trim();
     const subCourseName = String(req.body?.subCourseName ?? '').trim();
     const golfCourseApiId = req.body?.golfCourseApiId ? String(req.body.golfCourseApiId) : '';
@@ -537,8 +754,15 @@ out geom;
     const matchedList: ServerGolfCourseDetail[] = [];
 
     if (golfCourseApiId) {
-      const direct = await fetchGolfCourseApiDetail(golfCourseApiId);
-      if (direct) matchedList.push(direct);
+      if (golfCourseApiId.startsWith('oga_')) {
+        const direct = await fetchOpenGolfDetail(golfCourseApiId);
+        if (direct) matchedList.push(direct);
+      } else {
+        const direct =
+          (await fetchGolfCourseApiDetail(golfCourseApiId)) ??
+          (await fetchOpenGolfDetail(golfCourseApiId));
+        if (direct) matchedList.push(direct);
+      }
     }
 
     const baseName = name
@@ -548,26 +772,53 @@ out geom;
     const queryTerm = baseName.length >= 3 ? baseName : name.split('—')[0].trim();
 
     if (queryTerm) {
-      const searchHits = await searchGolfCourseApi(queryTerm);
       const targetNorm = normalizeCourseName(name.split('—')[0]);
 
-      const relevant = searchHits.filter((c) => {
+      // 1. Search OpenGolfAPI (keyless, 32k+ courses)
+      const ogaHits = await searchOpenGolfApi(queryTerm);
+      const ogaRelevant = ogaHits.filter((c) => {
         if (matchedList.some((m) => m.id === c.id)) return false;
         if (c.location && !Number.isNaN(lat) && !Number.isNaN(lng)) {
           const dist = haversineMeters(lat, lng, c.location.lat, c.location.lng);
-          if (dist <= 8000) return true;
+          if (dist <= 15000) return true;
         }
         const clubNorm = normalizeCourseName(c.clubName);
-        return Boolean(targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm)));
+        return Boolean(
+          targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
+        );
       });
 
-      const hydrated = await Promise.all(
-        relevant.slice(0, 4).map(async (c) => {
+      const ogaHydrated = await Promise.all(
+        ogaRelevant.slice(0, 4).map(async (c) => {
           if (c.tees.some((t) => t.holes.length > 0)) return c;
-          return (await fetchGolfCourseApiDetail(c.id)) ?? c;
+          return (await fetchOpenGolfDetail(c.id)) ?? c;
         })
       );
-      matchedList.push(...hydrated);
+      matchedList.push(...ogaHydrated);
+
+      // 2. If GolfCourseAPI key is also configured, check it
+      if (getGolfCourseApiKey()) {
+        const searchHits = await searchGolfCourseApi(queryTerm);
+        const relevant = searchHits.filter((c) => {
+          if (matchedList.some((m) => m.id === c.id)) return false;
+          if (c.location && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+            const dist = haversineMeters(lat, lng, c.location.lat, c.location.lng);
+            if (dist <= 8000) return true;
+          }
+          const clubNorm = normalizeCourseName(c.clubName);
+          return Boolean(
+            targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
+          );
+        });
+
+        const hydrated = await Promise.all(
+          relevant.slice(0, 4).map(async (c) => {
+            if (c.tees.some((t) => t.holes.length > 0)) return c;
+            return (await fetchGolfCourseApiDetail(c.id)) ?? c;
+          })
+        );
+        matchedList.push(...hydrated);
+      }
     }
 
     // If a specific subCourseName was requested, rank matching course first
@@ -599,12 +850,6 @@ out geom;
       .replace(/^the\s+/, '')
       .replace(/\b(golf|course|club|links|country|resort)\b/g, '')
       .replace(/[^a-z0-9]/g, '');
-  }
-
-  function isDiscGolfCourse(...parts: Array<string | undefined>): boolean {
-    const text = parts.filter(Boolean).join(' ').toLowerCase();
-    if (!text) return false;
-    return /\b(disc\s*-?\s*golf|disk\s*-?\s*golf|disgolf|frisbee|frolf|disc\s*park)\b/i.test(text);
   }
 
   function deduplicateCourses(items: UnifiedCourseCandidate[]): UnifiedCourseCandidate[] {
@@ -703,9 +948,25 @@ out geom;
   }
 
   app.get('/api/osm/nearby', async (req, res) => {
-    const lat = Number(req.query.lat);
-    const lng = Number(req.query.lng);
+    let lat = Number(req.query.lat);
+    let lng = Number(req.query.lng);
     const radius = Math.min(80000, Math.max(5000, Number(req.query.radius) || 45000));
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      try {
+        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '';
+        const ipStr = Array.isArray(clientIp) ? clientIp[0] : String(clientIp).split(',')[0].trim();
+        const ipQuery = ipStr && ipStr !== '127.0.0.1' && ipStr !== '::1' ? ipStr : '';
+        const ipRes = await fetchWithTimeout(`http://ip-api.com/json/${ipQuery}`, {}, 4000);
+        if (ipRes.ok) {
+          const ipData = (await ipRes.json()) as { lat?: number; lon?: number };
+          if (typeof ipData.lat === 'number' && typeof ipData.lon === 'number') {
+            lat = ipData.lat;
+            lng = ipData.lon;
+          }
+        }
+      } catch {}
+    }
 
     if (Number.isNaN(lat) || Number.isNaN(lng)) {
       res.status(400).json({ error: 'Invalid coordinates' });
@@ -764,6 +1025,7 @@ out center 30;
             properties?: {
               osm_id?: number;
               osm_type?: string;
+              osm_key?: string;
               osm_value?: string;
               name?: string;
               city?: string;
@@ -776,7 +1038,11 @@ out center 30;
           const p = f.properties;
           const coords = f.geometry?.coordinates;
           if (!p || !coords || !p.name) continue;
-          if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) {
+          if (
+            p.osm_value === 'disc_golf_course' ||
+            p.osm_value === 'miniature_golf' ||
+            isDiscGolfCourse(p.name, p.osm_value, p.osm_key)
+          ) {
             continue;
           }
           const isGolf =
@@ -806,8 +1072,12 @@ out center 30;
           if (!name) continue;
           if (
             el.tags?.sport === 'disc_golf' ||
+            el.tags?.sport === 'footgolf' ||
             el.tags?.leisure === 'disc_golf_course' ||
-            isDiscGolfCourse(name, el.tags?.description, el.tags?.sport)
+            el.tags?.leisure === 'miniature_golf' ||
+            el.tags?.golf === 'disc_golf' ||
+            el.tags?.golf === 'miniature' ||
+            isDiscGolfCourse(name, el.tags?.description, el.tags?.sport, el.tags?.leisure, el.tags?.golf)
           ) {
             continue;
           }
@@ -887,7 +1157,7 @@ out center 30;
       photonParams.set('lon', near.lng.toFixed(4));
     }
 
-    const [arcRes, nomRes, photonRes, gcaRes] = await Promise.allSettled([
+    const [arcRes, nomRes, photonRes, ogaRes, gcaRes] = await Promise.allSettled([
       queryArcGisGolfCourses(q, near, 12),
       fetchWithTimeout(
         `https://nominatim.openstreetmap.org/search?${nomParams.toString()}`,
@@ -899,11 +1169,34 @@ out center 30;
         { headers: { 'User-Agent': OSM_USER_AGENT, Accept: 'application/json' } },
         8000
       ).then(async (r) => (r.ok ? r.json() : { features: [] })),
-      searchGolfCourseApi(q),
+      searchOpenGolfApi(q),
+      getGolfCourseApiKey() ? searchGolfCourseApi(q) : Promise.resolve([]),
     ]);
 
     const combined: UnifiedCourseCandidate[] = [];
 
+    // OpenGolfAPI hits
+    if (ogaRes.status === 'fulfilled') {
+      for (const c of ogaRes.value) {
+        if (!c.location) continue;
+        if (isDiscGolfCourse(c.displayName, c.clubName, c.courseName)) continue;
+        const addr = [c.address, c.city, c.state, c.country].filter(Boolean).join(', ');
+        combined.push({
+          placeId: c.id,
+          name: c.displayName,
+          formattedAddress: addr || undefined,
+          lat: c.location.lat,
+          lng: c.location.lng,
+          source: 'OpenGolfAPI',
+          score: 96,
+          golfCourseApiId: c.id,
+          clubName: c.clubName,
+          courseName: c.courseName,
+        });
+      }
+    }
+
+    // GolfCourseAPI hits if configured
     if (gcaRes.status === 'fulfilled') {
       for (const c of gcaRes.value) {
         if (!c.location) continue;
@@ -942,6 +1235,7 @@ out center 30;
       }>) {
         if (
           item.type === 'disc_golf_course' ||
+          item.type === 'miniature_golf' ||
           isDiscGolfCourse(item.name, item.display_name, item.type)
         ) {
           continue;
@@ -949,23 +1243,20 @@ out center 30;
         const isGolf =
           item.type === 'golf_course' ||
           item.class === 'leisure' ||
-          item.display_name.toLowerCase().includes('golf');
+          item.display_name.toLowerCase().includes('golf') ||
+          item.display_name.toLowerCase().includes('country club');
         if (!isGolf) continue;
         const lat = Number(item.lat);
         const lng = Number(item.lon);
         if (Number.isNaN(lat) || Number.isNaN(lng)) continue;
-        const parts = item.display_name.split(',').map((s) => s.trim());
         combined.push({
-          placeId:
-            item.osm_type && item.osm_id
-              ? `osm_${item.osm_type}_${item.osm_id}`
-              : `osm_nom_${item.place_id}`,
-          name: item.name?.trim() || parts[0] || 'Golf Course',
-          formattedAddress: parts.slice(1, 4).join(', ') || undefined,
+          placeId: item.osm_id ? `osm_${item.osm_type ?? 'n'}_${item.osm_id}` : `nom_${item.place_id}`,
+          name: item.name || item.display_name.split(',')[0],
+          formattedAddress: item.display_name,
           lat,
           lng,
           source: 'OpenStreetMap',
-          score: 88,
+          score: 85,
         });
       }
     }
@@ -990,7 +1281,11 @@ out center 30;
         const p = f.properties;
         const coords = f.geometry?.coordinates;
         if (!p || !coords || !p.name) continue;
-        if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) {
+        if (
+          p.osm_value === 'disc_golf_course' ||
+          p.osm_value === 'miniature_golf' ||
+          isDiscGolfCourse(p.name, p.osm_value, p.osm_key)
+        ) {
           continue;
         }
         const isGolf =

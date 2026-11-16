@@ -6,6 +6,7 @@ import {
   findNearbyCoursesOsm,
   searchCoursesOsm,
   summarizeOsmGeometry,
+  isDiscGolfCourse,
 } from '../services/osmGolfService';
 
 interface CourseSearchModalProps {
@@ -40,7 +41,7 @@ export const CourseSearchModal: React.FC<CourseSearchModalProps> = ({
 
     try {
       const courses = await findNearbyCoursesOsm(userPosition, 45000);
-      setResults(courses);
+      setResults(courses.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress)));
     } catch {
       setErrorMessage('Could not reach OpenStreetMap nearby courses. Try searching by name below.');
     } finally {
@@ -58,7 +59,7 @@ export const CourseSearchModal: React.FC<CourseSearchModalProps> = ({
 
       try {
         const courses = await searchCoursesOsm(trimmed, userPosition);
-        setResults(courses);
+        setResults(courses.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress)));
       } catch {
         setErrorMessage('Unable to complete OpenStreetMap search right now. Check your connection.');
       } finally {

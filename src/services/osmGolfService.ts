@@ -56,10 +56,10 @@ interface UnifiedCourseResponseItem {
   courseName?: string;
 }
 
-function isDiscGolfCourse(...parts: Array<string | undefined>): boolean {
+export function isDiscGolfCourse(...parts: Array<string | undefined | null>): boolean {
   const text = parts.filter(Boolean).join(' ').toLowerCase();
   if (!text) return false;
-  return /\b(disc\s*-?\s*golf|disk\s*-?\s*golf|disgolf|frisbee|frolf|disc\s*park)\b/i.test(text);
+  return /\b(disc\s*[-/]?\s*golf|disk\s*[-/]?\s*golf|discgolf|diskgolf|frisbee(\s*golf)?|frolf|disc\s*park|disc\s*course|dgc|d\.g\.c\.|dg\s*course|pdga|foot\s*golf|footgolf|soccer\s*golf|mini\s*[-/]?\s*golf|miniature\s*golf|putt\s*[-/]?\s*putt|crazy\s*golf)\b/i.test(text);
 }
 
 function mapCandidateToCourseInfo(item: UnifiedCourseResponseItem): CourseInfo {
@@ -100,7 +100,7 @@ async function queryDirectCourseDirectories(
 ): Promise<CourseInfo[]> {
   const arcParams = new URLSearchParams({
     category: 'Golf Course',
-    outFields: 'PlaceName,Place_addr,City,Region',
+    outFields: 'PlaceName,Place_addr,City,Region,Type',
     f: 'json',
     maxLocations: '18',
   });
@@ -126,7 +126,7 @@ async function queryDirectCourseDirectories(
         address?: string;
         score?: number;
         location?: { x: number; y: number };
-        attributes?: { PlaceName?: string; Place_addr?: string; City?: string; Region?: string };
+        attributes?: { PlaceName?: string; Place_addr?: string; City?: string; Region?: string; Type?: string };
       }>;
     }>(
       `https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates?${arcParams.toString()}`,
@@ -155,7 +155,7 @@ async function queryDirectCourseDirectories(
       if (!c.location) continue;
       const name = (c.attributes?.PlaceName || c.address || '').trim();
       if (!name) continue;
-      if (isDiscGolfCourse(name, c.address, c.attributes?.Place_addr)) continue;
+      if (isDiscGolfCourse(name, c.address, c.attributes?.Place_addr, c.attributes?.Type)) continue;
       const addr =
         c.attributes?.Place_addr ||
         [c.attributes?.City, c.attributes?.Region].filter(Boolean).join(', ') ||
@@ -177,7 +177,7 @@ async function queryDirectCourseDirectories(
       const p = f.properties;
       const coords = f.geometry?.coordinates;
       if (!p || !coords || !p.name) continue;
-      if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) continue;
+      if (p.osm_value === 'disc_golf_course' || p.osm_value === 'miniature_golf' || isDiscGolfCourse(p.name, p.osm_value)) continue;
       const isGolf =
         p.osm_value === 'golf_course' ||
         p.name.toLowerCase().includes('golf') ||
@@ -233,14 +233,16 @@ async function queryDirectCourseDirectories(
 }
 
 export async function findNearbyCoursesOsm(
-  center: LatLngLiteral,
+  center?: LatLngLiteral | null,
   radiusMeters = 45000
 ): Promise<CourseInfo[]> {
   const params = new URLSearchParams({
-    lat: center.lat.toFixed(6),
-    lng: center.lng.toFixed(6),
     radius: String(radiusMeters),
   });
+  if (center) {
+    params.set('lat', center.lat.toFixed(6));
+    params.set('lng', center.lng.toFixed(6));
+  }
 
   try {
     const data = await fetchJsonWithTimeout<{ courses?: UnifiedCourseResponseItem[] }>(
@@ -256,7 +258,10 @@ export async function findNearbyCoursesOsm(
     console.warn('Backend /api/osm/nearby unavailable, using direct directory fallback:', err);
   }
 
-  return queryDirectCourseDirectories('', center, radiusMeters);
+  if (center) {
+    return queryDirectCourseDirectories('', center, radiusMeters);
+  }
+  return [];
 }
 
 export async function searchCoursesOsm(
@@ -705,23 +710,34 @@ export async function fetchCourseGolfGeometry(
     }
   }
 
-  const res = await fetch('/api/osm/course-geometry', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      lat: course.location.lat,
-      lng: course.location.lng,
-      forceRefresh,
-    }),
-  });
+  let elements: OverpassElement[] = [];
+  try {
+    const res = await fetch('/api/osm/course-geometry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        lat: course.location.lat,
+        lng: course.location.lng,
+        forceRefresh,
+      }),
+    });
 
-  if (!res.ok) {
-    throw new Error(`OSM sync failed (HTTP ${res.status})`);
+    if (res.ok) {
+      const data = (await res.json()) as { elements?: OverpassElement[] };
+      elements = Array.isArray(data.elements) ? data.elements : [];
+    }
+  } catch (err) {
+    console.warn('Could not sync live OSM geometry, checking cache or using empty geometry:', err);
   }
 
-  const { elements } = (await res.json()) as { elements: OverpassElement[] };
+  if (elements.length === 0) {
+    const cached = getCachedOsmCourseGeometry(baseCourseId);
+    if (cached) {
+      return course.subCourseId ? filterGeometryForSubCourse(cached, course.subCourseId) : cached;
+    }
+  }
 
   // 1. Identify course boundary multipolygon rings (leisure=golf_course) & parent course relations
   const wayRelationLoopName = new Map<number, string>();
