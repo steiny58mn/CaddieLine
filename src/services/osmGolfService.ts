@@ -7,6 +7,7 @@ import {
   OsmFeatureKind,
   OsmHoleFeature,
   OsmPolygonFeature,
+  OsmSubCourse,
 } from '../types/golf';
 import {
   DEFAULT_PAR_LAYOUT,
@@ -17,7 +18,7 @@ import {
   pointToPolylineMinDistanceMeters,
 } from '../utils/golfMath';
 
-const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v3_';
+const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v5_';
 const METERS_TO_YARDS = 1.0936133;
 
 interface OverpassPoint {
@@ -193,18 +194,22 @@ async function queryDirectCourseDirectories(
     if (!dup) deduped.push(item);
   }
 
-  if (near && !text.trim()) {
-    return deduped
-      .map((c) => {
-        const meters = computeDistanceMeters(near, { lat: c.lat, lng: c.lng });
-        const miles = (meters / 1609.344).toFixed(1);
-        return {
-          ...c,
-          distMeters: meters,
-          formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
-        };
-      })
-      .filter((c) => (c.distMeters ?? 0) <= radiusMeters * 1.35)
+  if (near) {
+    const withDistances = deduped.map((c) => {
+      const meters = computeDistanceMeters(near, { lat: c.lat, lng: c.lng });
+      const miles = (meters / 1609.344).toFixed(1);
+      return {
+        ...c,
+        distMeters: meters,
+        formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
+      };
+    });
+
+    const filtered = !text.trim()
+      ? withDistances.filter((c) => (c.distMeters ?? 0) <= radiusMeters * 1.35)
+      : withDistances;
+
+    return filtered
       .sort((a, b) => (a.distMeters ?? 0) - (b.distMeters ?? 0))
       .slice(0, 18)
       .map(mapCandidateToCourseInfo);
@@ -279,46 +284,37 @@ function toLatLngs(points?: OverpassPoint[]): LatLngLiteral[] {
   return points.map((p) => ({ lat: p.lat, lng: p.lon }));
 }
 
-function extractPolygonFromElement(el: OverpassElement): LatLngLiteral[] {
-  if (el.type === 'way' && el.geometry && el.geometry.length >= 3) {
-    const pts = toLatLngs(el.geometry);
-    // Remove closing duplicate vertex if present
-    if (
-      pts.length > 3 &&
-      Math.abs(pts[0].lat - pts[pts.length - 1].lat) < 1e-7 &&
-      Math.abs(pts[0].lng - pts[pts.length - 1].lng) < 1e-7
-    ) {
-      return pts.slice(0, -1);
-    }
-    return pts;
+function cleanRing(pts: LatLngLiteral[]): LatLngLiteral[] {
+  if (
+    pts.length > 3 &&
+    Math.abs(pts[0].lat - pts[pts.length - 1].lat) < 1e-7 &&
+    Math.abs(pts[0].lng - pts[pts.length - 1].lng) < 1e-7
+  ) {
+    return pts.slice(0, -1);
   }
+  return pts;
+}
 
-  if (el.type === 'relation' && el.members) {
-    const outerWays = el.members
-      .filter((m) => (m.role === 'outer' || m.role === '') && m.geometry && m.geometry.length >= 2)
-      .map((m) => toLatLngs(m.geometry));
-    if (outerWays.length === 0) return [];
-    // Pick the largest/first outer ring (stitch simple contiguous segments if split)
-    if (outerWays.length === 1) {
-      const pts = outerWays[0];
-      return pts.length > 3 ? pts.slice(0, -1) : pts;
-    }
-    const merged: LatLngLiteral[] = [...outerWays[0]];
-    const remaining = outerWays.slice(1);
+function stitchWaySegments(segments: LatLngLiteral[][]): LatLngLiteral[][] {
+  const remaining = segments.map((s) => [...s]);
+  const rings: LatLngLiteral[][] = [];
+
+  while (remaining.length > 0) {
+    const merged: LatLngLiteral[] = remaining.shift()!;
     let safety = 0;
-    while (remaining.length > 0 && safety < 32) {
+    while (remaining.length > 0 && safety < 64) {
       safety += 1;
       const tail = merged[merged.length - 1];
       let matchedIdx = -1;
       let reverse = false;
       for (let i = 0; i < remaining.length; i += 1) {
         const seg = remaining[i];
-        if (computeDistanceMeters(tail, seg[0]) < 2) {
+        if (computeDistanceMeters(tail, seg[0]) < 3) {
           matchedIdx = i;
           reverse = false;
           break;
         }
-        if (computeDistanceMeters(tail, seg[seg.length - 1]) < 2) {
+        if (computeDistanceMeters(tail, seg[seg.length - 1]) < 3) {
           matchedIdx = i;
           reverse = true;
           break;
@@ -329,10 +325,32 @@ function extractPolygonFromElement(el: OverpassElement): LatLngLiteral[] {
       const ordered = reverse ? [...seg].reverse() : seg;
       merged.push(...ordered.slice(1));
     }
-    if (merged.length >= 3) return merged;
+    const cleaned = cleanRing(merged);
+    if (cleaned.length >= 3) rings.push(cleaned);
+  }
+
+  return rings;
+}
+
+function extractPolygonRingsFromElement(el: OverpassElement): LatLngLiteral[][] {
+  if (el.type === 'way' && el.geometry && el.geometry.length >= 3) {
+    return [cleanRing(toLatLngs(el.geometry))];
+  }
+
+  if (el.type === 'relation' && el.members) {
+    const outerWays = el.members
+      .filter((m) => (m.role === 'outer' || m.role === '') && m.geometry && m.geometry.length >= 2)
+      .map((m) => toLatLngs(m.geometry));
+    if (outerWays.length === 0) return [];
+    return stitchWaySegments(outerWays);
   }
 
   return [];
+}
+
+function extractPolygonFromElement(el: OverpassElement): LatLngLiteral[] {
+  const rings = extractPolygonRingsFromElement(el);
+  return rings[0] ?? [];
 }
 
 function parseHoleNumber(ref?: string, name?: string): number | null {
@@ -343,6 +361,76 @@ function parseHoleNumber(ref?: string, name?: string): number | null {
       const n = Number(match[1]);
       if (n >= 1 && n <= 18) return n;
     }
+  }
+  return null;
+}
+
+function toTitleCase(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function cleanLoopLabel(raw?: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().replace(/\s+/g, ' ');
+  if (!trimmed || /^(yes|no|true|false|golf|hole)$/i.test(trimmed)) return null;
+  return toTitleCase(trimmed);
+}
+
+function parseSubCoursePrefix(name?: string): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  const sepMatch = trimmed.match(/^([a-z][a-z\s&'.-]{1,28}?)\s*[-–:#]\s*(?:hole\s*)?\d+\b/i);
+  if (sepMatch) {
+    const raw = sepMatch[1].trim();
+    if (!/^(hole|no|number|par)$/i.test(raw)) {
+      return cleanLoopLabel(raw);
+    }
+  }
+  const spaceMatch = trimmed.match(/^([a-z][a-z\s]{1,24}?)\s+(?:hole\s*#?\s*)?\d+\b/i);
+  if (spaceMatch) {
+    const raw = spaceMatch[1].trim();
+    if (!/^(hole|no|number|green|tee|par)$/i.test(raw)) {
+      return cleanLoopLabel(raw);
+    }
+  }
+  return null;
+}
+
+function extractExplicitLoopName(tags: Record<string, string>): string | null {
+  const candidates = [
+    tags['golf:course:name'],
+    tags['golf:course'],
+    tags['course:name'],
+    tags['golf:loop'],
+    tags['loop'],
+    tags['golf:subcourse'],
+    tags['subcourse'],
+    tags['section'],
+    tags['course'],
+  ];
+  for (const cand of candidates) {
+    const cleaned = cleanLoopLabel(cand);
+    if (cleaned) return cleaned;
+  }
+  return null;
+}
+
+function parseRefLoopCode(ref?: string): string | null {
+  if (!ref) return null;
+  const trimmed = ref.trim();
+  const prefixLetter = trimmed.match(/^([A-Za-z]{1,4})[-\s]?(\d{1,2})$/);
+  if (prefixLetter) {
+    const n = Number(prefixLetter[2]);
+    if (n >= 1 && n <= 18) return toTitleCase(prefixLetter[1]);
+  }
+  const suffixLetter = trimmed.match(/^(\d{1,2})([A-Za-z])$/);
+  if (suffixLetter) {
+    const n = Number(suffixLetter[1]);
+    if (n >= 1 && n <= 18) return `Loop ${suffixLetter[2].toUpperCase()}`;
   }
   return null;
 }
@@ -393,6 +481,115 @@ function polygonDiagonalMeters(poly: LatLngLiteral[]): number {
   return computeDistanceMeters({ lat: minLat, lng: minLng }, { lat: maxLat, lng: maxLng });
 }
 
+function dedupeHolesList(
+  candidates: OsmHoleFeature[],
+  courseCenter: LatLngLiteral
+): OsmHoleFeature[] {
+  const holesMap = new Map<number, OsmHoleFeature>();
+  for (const candidate of candidates) {
+    const existing = holesMap.get(candidate.holeNumber);
+    if (!existing) {
+      holesMap.set(candidate.holeNumber, candidate);
+      continue;
+    }
+    const sameHoleVariant =
+      existing.greenCenterLatLng &&
+      candidate.greenCenterLatLng &&
+      computeDistanceMeters(existing.greenCenterLatLng, candidate.greenCenterLatLng) < 120;
+    if (sameHoleVariant) {
+      const winner = (candidate.yardage ?? 0) > (existing.yardage ?? 0) ? candidate : existing;
+      const other = winner === candidate ? existing : candidate;
+      holesMap.set(candidate.holeNumber, {
+        ...winner,
+        par: winner.par ?? other.par,
+        handicap: winner.handicap ?? other.handicap,
+      });
+    } else {
+      const candMid = candidate.path[Math.floor(candidate.path.length / 2)] ?? candidate.teeLatLng;
+      const existMid = existing.path[Math.floor(existing.path.length / 2)] ?? existing.teeLatLng;
+      const candDist = candMid ? computeDistanceMeters(courseCenter, candMid) : Infinity;
+      const existDist = existMid ? computeDistanceMeters(courseCenter, existMid) : Infinity;
+      if (candDist < existDist) {
+        holesMap.set(candidate.holeNumber, candidate);
+      }
+    }
+  }
+  return Array.from(holesMap.values()).sort((a, b) => a.holeNumber - b.holeNumber);
+}
+
+function matchFeaturesToHoles(
+  holes: OsmHoleFeature[],
+  greens: OsmPolygonFeature[],
+  bunkers: OsmPolygonFeature[],
+  waters: OsmPolygonFeature[],
+  fairways: OsmPolygonFeature[],
+  tees: OsmPolygonFeature[]
+): {
+  holes: OsmHoleFeature[];
+  greens: OsmPolygonFeature[];
+  bunkers: OsmPolygonFeature[];
+  waters: OsmPolygonFeature[];
+  fairways: OsmPolygonFeature[];
+  tees: OsmPolygonFeature[];
+} {
+  const clonedHoles = holes.map((h) => ({ ...h }));
+  const clonedGreens = greens.map((g) => ({ ...g }));
+  const clonedBunkers = bunkers.map((b) => ({ ...b }));
+  const clonedWaters = waters.map((w) => ({ ...w }));
+
+  for (const green of clonedGreens) {
+    let bestHole: OsmHoleFeature | null = null;
+    let bestDist = 75;
+    for (const h of clonedHoles) {
+      const refPt = h.greenCenterLatLng ?? h.path[h.path.length - 1];
+      if (!refPt) continue;
+      const d = computeDistanceMeters(green.center, refPt);
+      if (d < bestDist) {
+        bestDist = d;
+        bestHole = h;
+      }
+    }
+    if (bestHole) {
+      green.holeNumber = bestHole.holeNumber;
+      green.label = `Hole ${bestHole.holeNumber} Green`;
+      bestHole.greenCenterLatLng = green.center;
+    }
+  }
+
+  const assignHazards = (items: OsmPolygonFeature[]) => {
+    for (const item of items) {
+      let bestHoleNum: number | undefined;
+      let bestDist = 95;
+      for (const h of clonedHoles) {
+        const dLine = pointToPolylineMinDistanceMeters(item.center, h.path);
+        const dGreen = h.greenCenterLatLng
+          ? computeDistanceMeters(item.center, h.greenCenterLatLng)
+          : Infinity;
+        const d = Math.min(dLine, dGreen);
+        if (d < bestDist) {
+          bestDist = d;
+          bestHoleNum = h.holeNumber;
+        }
+      }
+      if (bestHoleNum !== undefined) {
+        item.holeNumber = bestHoleNum;
+      }
+    }
+  };
+
+  assignHazards(clonedBunkers);
+  assignHazards(clonedWaters);
+
+  return {
+    holes: clonedHoles,
+    greens: clonedGreens,
+    bunkers: clonedBunkers,
+    waters: clonedWaters,
+    fairways,
+    tees,
+  };
+}
+
 export function getCachedOsmCourseGeometry(courseId: string): OsmCourseGeometry | null {
   try {
     const raw = localStorage.getItem(`${GEOMETRY_CACHE_PREFIX}${courseId}`);
@@ -411,14 +608,82 @@ export function saveCachedOsmCourseGeometry(geometry: OsmCourseGeometry): void {
   }
 }
 
+function shiftHoleNumber<T extends { holeNumber?: number }>(item: T, offset: number): T {
+  if (item.holeNumber === undefined) return item;
+  return { ...item, holeNumber: item.holeNumber + offset };
+}
+
+export function filterGeometryForSubCourse(
+  geometry: OsmCourseGeometry,
+  subCourseId?: string
+): OsmCourseGeometry {
+  if (!subCourseId || !geometry.subCourses?.length) return geometry;
+
+  if (subCourseId.startsWith('combo__')) {
+    const [, frontId, backId] = subCourseId.split('__');
+    const front = geometry.subCourses.find((s) => s.id === frontId);
+    const back = geometry.subCourses.find((s) => s.id === backId);
+    if (front && back) {
+      return {
+        ...geometry,
+        holes: [
+          ...front.holes.filter((h) => h.holeNumber <= 9),
+          ...back.holes
+            .filter((h) => h.holeNumber <= 9)
+            .map((h) => ({ ...h, holeNumber: h.holeNumber + 9 })),
+        ],
+        greens: [
+          ...front.greens.filter((g) => !g.holeNumber || g.holeNumber <= 9),
+          ...back.greens
+            .filter((g) => !g.holeNumber || g.holeNumber <= 9)
+            .map((g) => {
+              const shifted = shiftHoleNumber(g, 9);
+              return shifted.holeNumber
+                ? { ...shifted, label: `Hole ${shifted.holeNumber} Green` }
+                : shifted;
+            }),
+        ],
+        bunkers: [
+          ...front.bunkers.filter((b) => !b.holeNumber || b.holeNumber <= 9),
+          ...back.bunkers
+            .filter((b) => !b.holeNumber || b.holeNumber <= 9)
+            .map((b) => shiftHoleNumber(b, 9)),
+        ],
+        waters: [
+          ...front.waters.filter((w) => !w.holeNumber || w.holeNumber <= 9),
+          ...back.waters
+            .filter((w) => !w.holeNumber || w.holeNumber <= 9)
+            .map((w) => shiftHoleNumber(w, 9)),
+        ],
+        fairways: front.fairways,
+        tees: front.tees,
+      };
+    }
+  }
+
+  const sub = geometry.subCourses.find((s) => s.id === subCourseId);
+  if (!sub) return geometry;
+  return {
+    ...geometry,
+    holes: sub.holes,
+    greens: sub.greens,
+    bunkers: sub.bunkers,
+    waters: sub.waters,
+    fairways: sub.fairways,
+    tees: sub.tees,
+  };
+}
+
 export async function fetchCourseGolfGeometry(
   course: CourseInfo,
   forceRefresh = false
 ): Promise<OsmCourseGeometry> {
+  const baseCourseId = course.placeId.split('__')[0];
+
   if (!forceRefresh) {
-    const cached = getCachedOsmCourseGeometry(course.placeId);
+    const cached = getCachedOsmCourseGeometry(baseCourseId);
     if (cached && Date.now() - cached.fetchedAt < 1000 * 60 * 60 * 24 * 14) {
-      return cached;
+      return course.subCourseId ? filterGeometryForSubCourse(cached, course.subCourseId) : cached;
     }
   }
 
@@ -440,34 +705,56 @@ export async function fetchCourseGolfGeometry(
 
   const { elements } = (await res.json()) as { elements: OverpassElement[] };
 
-  // 1. Identify the selected course boundary polygon (leisure=golf_course) so adjacent courses are excluded
-  let courseBoundary: LatLngLiteral[] | null = null;
+  // 1. Identify course boundary multipolygon rings (leisure=golf_course) & parent course relations
+  const wayRelationLoopName = new Map<number, string>();
   const courseBoundaries: Array<{
     id: string;
+    rawName: string;
     name: string;
-    polygon: LatLngLiteral[];
+    rings: LatLngLiteral[][];
     containsCoursePoint: boolean;
   }> = [];
 
   for (const el of elements) {
+    if (
+      el.type === 'relation' &&
+      (el.tags?.golf === 'course' || el.tags?.leisure === 'golf_course') &&
+      el.tags?.name &&
+      el.members
+    ) {
+      const relLabel = cleanLoopLabel(el.tags.name);
+      if (relLabel) {
+        for (const m of el.members) {
+          if (m.type === 'way' && (m.role === '' || m.role === 'hole')) {
+            wayRelationLoopName.set(m.ref, relLabel);
+          }
+        }
+      }
+    }
+
     if (el.tags?.leisure !== 'golf_course') continue;
-    const poly = extractPolygonFromElement(el);
-    if (poly.length < 3) continue;
+    const rings = extractPolygonRingsFromElement(el);
+    if (rings.length === 0) continue;
     courseBoundaries.push({
       id: `osm_${el.type}_${el.id}`,
+      rawName: (el.tags?.name ?? '').trim(),
       name: (el.tags?.name ?? '').toLowerCase(),
-      polygon: poly,
-      containsCoursePoint: isPointInPolygon(course.location, poly),
+      rings,
+      containsCoursePoint: rings.some((poly) => isPointInPolygon(course.location, poly)),
     });
   }
 
+  let selectedBoundaries: typeof courseBoundaries = [];
   if (courseBoundaries.length > 0) {
-    const exactId = courseBoundaries.find((b) => b.id === course.placeId);
+    const exactId = courseBoundaries.find((b) => b.id === baseCourseId);
     const targetNameLower = course.name
+      .split('—')[0]
       .toLowerCase()
       .replace(/^the\s+/, '')
       .replace(/golf (course|club|links)/g, '')
       .trim();
+    const firstWord = targetNameLower.split(/\s+/).find((w) => w.length >= 4);
+
     const byPointAndName = courseBoundaries.find(
       (b) => b.containsCoursePoint && targetNameLower && b.name.includes(targetNameLower)
     );
@@ -480,24 +767,54 @@ export async function fetchCourseGolfGeometry(
     if (!exactId && !byPointAndName && !byName && !byPoint) {
       let bestDist = 450;
       for (const b of courseBoundaries) {
-        const ring = [...b.polygon, b.polygon[0]];
-        const d = pointToPolylineMinDistanceMeters(course.location, ring);
-        if (d <= bestDist) {
-          bestDist = d;
-          closestNearEdge = b;
+        for (const poly of b.rings) {
+          const ring = [...poly, poly[0]];
+          const d = pointToPolylineMinDistanceMeters(course.location, ring);
+          if (d <= bestDist) {
+            bestDist = d;
+            closestNearEdge = b;
+          }
         }
       }
     }
 
-    courseBoundary = (exactId ?? byPointAndName ?? byName ?? byPoint ?? closestNearEdge)?.polygon ?? null;
+    const primary = exactId ?? byPointAndName ?? byName ?? byPoint ?? closestNearEdge;
+    if (primary) {
+      selectedBoundaries = [primary];
+      // Include sibling facility polygons that share the facility prefix (e.g. Championship + Par 3)
+      if (firstWord) {
+        for (const b of courseBoundaries) {
+          if (b.id !== primary.id && b.name.includes(firstWord)) {
+            selectedBoundaries.push(b);
+          }
+        }
+      }
+    }
   }
 
+  const courseBoundaryRings: LatLngLiteral[][] | null =
+    selectedBoundaries.length > 0 ? selectedBoundaries.flatMap((b) => b.rings) : null;
+
   const isInsideSelectedCourse = (pt: LatLngLiteral): boolean => {
-    if (!courseBoundary) return true;
-    return isPointInPolygon(pt, courseBoundary);
+    if (!courseBoundaryRings || courseBoundaryRings.length === 0) return true;
+    return courseBoundaryRings.some((poly) => isPointInPolygon(pt, poly));
   };
 
-  const holesMap = new Map<number, OsmHoleFeature>();
+  const findBoundaryNameForPoint = (pt: LatLngLiteral): string | null => {
+    if (selectedBoundaries.length < 2) return null;
+    for (const b of selectedBoundaries) {
+      if (b.rings.some((poly) => isPointInPolygon(pt, poly)) && b.rawName) {
+        return cleanLoopLabel(b.rawName);
+      }
+    }
+    return null;
+  };
+
+  const rawHoleCandidates: Array<{
+    loopName: string | null;
+    refLoopName: string | null;
+    hole: OsmHoleFeature;
+  }> = [];
   const greens: OsmPolygonFeature[] = [];
   const bunkers: OsmPolygonFeature[] = [];
   const waters: OsmPolygonFeature[] = [];
@@ -518,7 +835,7 @@ export async function fetchCourseGolfGeometry(
       const greenCenterLatLng = path[path.length - 1];
       const midPt = path[Math.floor(path.length / 2)];
       if (
-        courseBoundary &&
+        courseBoundaryRings &&
         !isInsideSelectedCourse(teeLatLng) &&
         !isInsideSelectedCourse(greenCenterLatLng) &&
         !isInsideSelectedCourse(midPt)
@@ -529,39 +846,27 @@ export async function fetchCourseGolfGeometry(
       const parNum = Number(tags.par);
       const hcpNum = Number(tags.handicap);
       const yardage = parseOsmYardage(tags, path);
+      const loopName =
+        extractExplicitLoopName(tags) ??
+        wayRelationLoopName.get(el.id) ??
+        parseSubCoursePrefix(tags.name) ??
+        findBoundaryNameForPoint(midPt);
+      const refLoopName = parseRefLoopCode(tags.ref);
 
-      const candidate: OsmHoleFeature = {
-        holeNumber,
-        par: parNum >= 3 && parNum <= 6 ? parNum : undefined,
-        handicap: hcpNum >= 1 && hcpNum <= 18 ? hcpNum : undefined,
-        yardage,
-        name: tags.name,
-        path,
-        teeLatLng,
-        greenCenterLatLng,
-      };
-
-      const existing = holesMap.get(holeNumber);
-      if (!existing) {
-        holesMap.set(holeNumber, candidate);
-      } else {
-        const sameHoleVariant =
-          existing.greenCenterLatLng &&
-          computeDistanceMeters(existing.greenCenterLatLng, greenCenterLatLng) < 120;
-        if (sameHoleVariant) {
-          if ((candidate.yardage ?? 0) > (existing.yardage ?? 0)) {
-            holesMap.set(holeNumber, candidate);
-          }
-        } else {
-          // Different holes with same number: prefer the one closer to the course center
-          const candDist = computeDistanceMeters(course.location, midPt);
-          const existMid = existing.path[Math.floor(existing.path.length / 2)] ?? existing.teeLatLng;
-          const existDist = existMid ? computeDistanceMeters(course.location, existMid) : Infinity;
-          if (candDist < existDist) {
-            holesMap.set(holeNumber, candidate);
-          }
-        }
-      }
+      rawHoleCandidates.push({
+        loopName,
+        refLoopName,
+        hole: {
+          holeNumber,
+          par: parNum >= 3 && parNum <= 6 ? parNum : undefined,
+          handicap: hcpNum >= 1 && hcpNum <= 18 ? hcpNum : undefined,
+          yardage,
+          name: tags.name,
+          path,
+          teeLatLng,
+          greenCenterLatLng,
+        },
+      });
       continue;
     }
 
@@ -574,7 +879,7 @@ export async function fetchCourseGolfGeometry(
     }
 
     const center = computePolygonCentroid(polygon);
-    if (courseBoundary && !isInsideSelectedCourse(center)) {
+    if (courseBoundaryRings && !isInsideSelectedCourse(center)) {
       continue;
     }
     const id = `osm_${el.type}_${el.id}`;
@@ -610,68 +915,87 @@ export async function fetchCourseGolfGeometry(
     }
   }
 
-  const holes = Array.from(holesMap.values()).sort((a, b) => a.holeNumber - b.holeNumber);
+  // Group holes by named sub-course loop (e.g. "Blue Spruce"/"White Birch"/"Red Pines" or "Gold"/"Silver")
+  const loopGroups = new Map<string, OsmHoleFeature[]>();
+  for (const entry of rawHoleCandidates) {
+    if (!entry.loopName) continue;
+    const arr = loopGroups.get(entry.loopName) ?? [];
+    arr.push(entry.hole);
+    loopGroups.set(entry.loopName, arr);
+  }
 
-  // Match greens to holes
-  for (const green of greens) {
-    if (green.holeNumber) continue;
-    let bestHole: OsmHoleFeature | null = null;
-    let bestDist = 75;
-    for (const h of holes) {
-      const refPt = h.greenCenterLatLng ?? h.path[h.path.length - 1];
-      if (!refPt) continue;
-      const d = computeDistanceMeters(green.center, refPt);
-      if (d < bestDist) {
-        bestDist = d;
-        bestHole = h;
-      }
+  let qualifyingLoops = Array.from(loopGroups.entries())
+    .map(([name, list]) => ({
+      name,
+      holes: dedupeHolesList(list, course.location),
+    }))
+    .filter((loop) => loop.holes.length >= 6)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Fallback: check ref-letter loop prefixes (e.g. A1..A9 / B1..B9) if no named loops matched
+  if (qualifyingLoops.length < 2) {
+    const refGroups = new Map<string, OsmHoleFeature[]>();
+    for (const entry of rawHoleCandidates) {
+      if (!entry.refLoopName) continue;
+      const arr = refGroups.get(entry.refLoopName) ?? [];
+      arr.push(entry.hole);
+      refGroups.set(entry.refLoopName, arr);
     }
-    if (bestHole) {
-      green.holeNumber = bestHole.holeNumber;
-      green.label = `Hole ${bestHole.holeNumber} Green`;
-      bestHole.greenCenterLatLng = green.center;
+    const refLoops = Array.from(refGroups.entries())
+      .map(([name, list]) => ({
+        name,
+        holes: dedupeHolesList(list, course.location),
+      }))
+      .filter((loop) => loop.holes.length >= 6)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (refLoops.length >= 2) {
+      qualifyingLoops = refLoops;
     }
   }
 
-  // Match bunkers & water hazards to nearest hole centerline / green
-  const assignHazards = (items: OsmPolygonFeature[]) => {
-    for (const item of items) {
-      if (item.holeNumber) continue;
-      let bestHoleNum: number | undefined;
-      let bestDist = 95;
-      for (const h of holes) {
-        const dLine = pointToPolylineMinDistanceMeters(item.center, h.path);
-        const dGreen = h.greenCenterLatLng
-          ? computeDistanceMeters(item.center, h.greenCenterLatLng)
-          : Infinity;
-        const d = Math.min(dLine, dGreen);
-        if (d < bestDist) {
-          bestDist = d;
-          bestHoleNum = h.holeNumber;
-        }
-      }
-      if (bestHoleNum !== undefined) {
-        item.holeNumber = bestHoleNum;
-      }
-    }
-  };
+  let subCourses: OsmSubCourse[] | undefined;
+  if (qualifyingLoops.length >= 2) {
+    subCourses = qualifyingLoops.map((loop) => {
+      const matched = matchFeaturesToHoles(
+        loop.holes,
+        greens,
+        bunkers,
+        waters,
+        fairways,
+        tees
+      );
+      return {
+        id: loop.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+        name: loop.name,
+        ...matched,
+      };
+    });
+  }
 
-  assignHazards(bunkers);
-  assignHazards(waters);
-
-  const geometry: OsmCourseGeometry = {
-    courseId: course.placeId,
-    fetchedAt: Date.now(),
-    holes,
+  const defaultHoles = dedupeHolesList(
+    rawHoleCandidates.map((c) => c.hole),
+    course.location
+  );
+  const matchedDefault = matchFeaturesToHoles(
+    defaultHoles,
     greens,
     bunkers,
     waters,
     fairways,
-    tees,
+    tees
+  );
+
+  const fullGeometry: OsmCourseGeometry = {
+    courseId: baseCourseId,
+    fetchedAt: Date.now(),
+    ...matchedDefault,
+    subCourses,
   };
 
-  saveCachedOsmCourseGeometry(geometry);
-  return geometry;
+  saveCachedOsmCourseGeometry(fullGeometry);
+  return course.subCourseId
+    ? filterGeometryForSubCourse(fullGeometry, course.subCourseId)
+    : fullGeometry;
 }
 
 export function summarizeOsmGeometry(geometry: OsmCourseGeometry): OsmCourseSummary {

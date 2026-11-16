@@ -7,16 +7,18 @@ export type DistanceUnit = 'yards' | 'meters';
 
 export type ShotLie =
   | 'fairway'
-  | 'left_rough'
-  | 'right_rough'
-  | 'left_trees'
-  | 'right_trees'
+  | 'green'
+  | 'fringe'
+  | 'rough'
+  | 'trees'
   | 'sand'
   | 'water'
   | 'ob'
-  | 'fringe'
-  | 'green'
-  | 'holed';
+  | 'holed'
+  | 'left_rough'
+  | 'right_rough'
+  | 'left_trees'
+  | 'right_trees';
 
 export type ShotDirection = 'left' | 'straight' | 'right' | 'short' | 'long';
 
@@ -46,6 +48,7 @@ export interface ShotRecord {
   endLatLng?: LatLngLiteral;
   timestamp: number;
   source: 'manual' | 'nfc' | 'map';
+  isPutt?: boolean;
 }
 
 export type HazardPinType = 'bunker' | 'water' | 'dogleg' | 'layup';
@@ -99,6 +102,17 @@ export interface OsmCourseSummary {
   waters: number;
 }
 
+export interface OsmSubCourse {
+  id: string;
+  name: string;
+  holes: OsmHoleFeature[];
+  greens: OsmPolygonFeature[];
+  bunkers: OsmPolygonFeature[];
+  waters: OsmPolygonFeature[];
+  fairways: OsmPolygonFeature[];
+  tees: OsmPolygonFeature[];
+}
+
 export interface OsmCourseGeometry {
   courseId: string;
   fetchedAt: number;
@@ -108,6 +122,7 @@ export interface OsmCourseGeometry {
   waters: OsmPolygonFeature[];
   fairways: OsmPolygonFeature[];
   tees: OsmPolygonFeature[];
+  subCourses?: OsmSubCourse[];
 }
 
 export interface HoleScoreState {
@@ -124,6 +139,8 @@ export interface CourseInfo {
   location: LatLngLiteral;
   attributions?: string[];
   osmSummary?: OsmCourseSummary;
+  subCourseId?: string;
+  subCourseName?: string;
 }
 
 export interface RoundState {

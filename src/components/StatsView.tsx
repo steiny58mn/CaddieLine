@@ -5,8 +5,11 @@ import {
   LIE_OPTIONS,
   formatDistanceValue,
   formatRelativeToPar,
+  getEffectivePutts,
   getHoleStrokes,
   isHolePlayed,
+  isShotPutt,
+  normalizeShotLie,
   unitSuffix,
 } from '../utils/golfMath';
 
@@ -29,8 +32,15 @@ export const StatsView: React.FC<StatsViewProps> = ({
   onLoadRound,
   onDeleteSavedRound,
 }) => {
+  const holeNums = Object.keys(round.scores).map(Number);
+  const playedHoles = holeNums.filter((n) => isHolePlayed(round.scores[n]));
+  const totalPutts = playedHoles.reduce((sum, n) => sum + getEffectivePutts(round.scores[n]), 0);
+  const avgPuttsPerHole = playedHoles.length > 0 ? totalPutts / playedHoles.length : null;
+  const totalStrokes = playedHoles.reduce((sum, n) => sum + getHoleStrokes(round.scores[n]), 0);
+  const totalParPlayed = playedHoles.reduce((sum, n) => sum + (round.holes[n]?.par ?? 4), 0);
+
   const allShots: ShotRecord[] = Object.values(round.scores).flatMap((h) => h.shots);
-  const nonPuttShots = allShots.filter((s) => s.clubId !== 'pt');
+  const nonPuttShots = allShots.filter((s) => !isShotPutt(s));
   const suffix = unitSuffix(round.unit);
 
   const leftCount = nonPuttShots.filter(
@@ -151,6 +161,41 @@ export const StatsView: React.FC<StatsViewProps> = ({
         </div>
       </div>
 
+      {/* Round Putting & Scoring Summary */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500">Avg Putts / Hole</div>
+          <div className="font-mono text-2xl font-bold text-[#0F1A14] tabular-nums mt-1">
+            {avgPuttsPerHole !== null ? avgPuttsPerHole.toFixed(2) : '—'}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+            {playedHoles.length > 0
+              ? `Across ${playedHoles.length} ${playedHoles.length === 1 ? 'hole' : 'holes'}`
+              : 'No holes played'}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500">Total Putts</div>
+          <div className="font-mono text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+            {totalPutts}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Tracked separately</div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500">Total Shots</div>
+          <div className="font-mono text-2xl font-bold text-[#0F1A14] tabular-nums mt-1">
+            {totalStrokes > 0 ? totalStrokes : '—'}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+            {totalStrokes > 0
+              ? `${formatRelativeToPar(totalStrokes - totalParPlayed)} vs par`
+              : 'Includes putts'}
+          </div>
+        </div>
+      </div>
+
       {/* Dispersion & Lie Breakdown Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Directional Dispersion */}
@@ -233,7 +278,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
           ) : (
             <div className="mt-4 space-y-2.5">
               {LIE_OPTIONS.map((meta) => {
-                const count = allShots.filter((s) => s.lie === meta.id).length;
+                const count = allShots.filter((s) => normalizeShotLie(s.lie) === meta.id).length;
                 if (count === 0) return null;
                 const pct = Math.round((count / allShots.length) * 100);
                 return (

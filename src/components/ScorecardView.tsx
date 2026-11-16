@@ -72,7 +72,6 @@ interface NineHoleTableProps {
   currentHole: number;
   unit: DistanceUnit;
   onSelectHole: (holeNumber: number) => void;
-  onUpdateHoleMeta: (holeNumber: number, patch: Partial<HolePinData>) => void;
   onOverrideHoleScore: (holeNumber: number, score: number | undefined) => void;
 }
 
@@ -84,7 +83,6 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
   currentHole,
   unit,
   onSelectHole,
-  onUpdateHoleMeta,
   onOverrideHoleScore,
 }) => {
   const sumPar = holeNumbers.reduce((acc, n) => acc + holes[n].par, 0);
@@ -144,17 +142,8 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
             <tr>
               <td className="py-2 px-3 text-left font-medium text-slate-600">Par</td>
               {holeNumbers.map((num) => (
-                <td key={num} className="py-1.5 px-1">
-                  <select
-                    value={holes[num].par}
-                    onChange={(e) => onUpdateHoleMeta(num, { par: Number(e.target.value) })}
-                    className="bg-transparent font-mono font-semibold text-slate-700 text-xs text-center rounded hover:bg-slate-100 py-1 px-1 cursor-pointer"
-                    aria-label={`Hole ${num} par`}
-                  >
-                    <option value={3}>3</option>
-                    <option value={4}>4</option>
-                    <option value={5}>5</option>
-                  </select>
+                <td key={num} className="py-2 px-1 font-mono font-semibold text-slate-700 tabular-nums">
+                  {holes[num].par}
                 </td>
               ))}
               <td className="py-2 px-3 font-mono font-bold text-[#0F1A14] bg-slate-50 tabular-nums">
@@ -397,7 +386,6 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
         currentHole={round.currentHole}
         unit={round.unit}
         onSelectHole={onSelectHole}
-        onUpdateHoleMeta={onUpdateHoleMeta}
         onOverrideHoleScore={onOverrideHoleScore}
       />
 
@@ -409,7 +397,6 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
         currentHole={round.currentHole}
         unit={round.unit}
         onSelectHole={onSelectHole}
-        onUpdateHoleMeta={onUpdateHoleMeta}
         onOverrideHoleScore={onOverrideHoleScore}
       />
     </div>

@@ -1,13 +1,25 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Compass, Loader2, MapPin, Nfc, Search, Trash2 } from 'lucide-react';
-import { CourseInfo, LatLngLiteral, OsmCourseGeometry, RoundState } from '../types/golf';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronRight, Compass, Loader2, MapPin, Nfc, Search, Trash2 } from 'lucide-react';
+import {
+  CourseInfo,
+  LatLngLiteral,
+  OsmCourseGeometry,
+  OsmSubCourse,
+  RoundState,
+} from '../types/golf';
 import {
   fetchCourseGolfGeometry,
+  filterGeometryForSubCourse,
   findNearbyCoursesOsm,
   searchCoursesOsm,
   summarizeOsmGeometry,
 } from '../services/osmGolfService';
-import { formatRelativeToPar, getHoleStrokes, isHolePlayed } from '../utils/golfMath';
+import {
+  computeDistanceMeters,
+  formatRelativeToPar,
+  getHoleStrokes,
+  isHolePlayed,
+} from '../utils/golfMath';
 
 interface CourseLandingViewProps {
   userPosition: LatLngLiteral | null;
@@ -18,8 +30,6 @@ interface CourseLandingViewProps {
   onDeleteSavedRound: (roundId: string) => void;
   onOpenBagNfc: () => void;
 }
-
-const FEATURED_QUERIES = ['Pebble Beach Golf Links', 'Torrey Pines Golf', 'TPC Sawgrass'];
 
 export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   userPosition,
@@ -36,6 +46,12 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   const [loadingCourseId, setLoadingCourseId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [pendingMultiCourse, setPendingMultiCourse] = useState<{
+    course: CourseInfo;
+    geometry: OsmCourseGeometry;
+  } | null>(null);
+  const [comboFrontId, setComboFrontId] = useState<string>('');
+  const [comboBackId, setComboBackId] = useState<string>('');
 
   const handleNearbySearch = useCallback(async () => {
     if (!userPosition) return;
@@ -60,6 +76,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
       setIsSearching(true);
       setErrorMessage(null);
       setHasSearched(true);
+      setPendingMultiCourse(null);
 
       try {
         const courses = await searchCoursesOsm(trimmed, userPosition);
@@ -81,25 +98,64 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
     [query, runTextSearch]
   );
 
+  const handlePickSubCourse = useCallback(
+    (course: CourseInfo, fullGeometry: OsmCourseGeometry, sub: OsmSubCourse) => {
+      const filtered = filterGeometryForSubCourse(fullGeometry, sub.id);
+      const summary = summarizeOsmGeometry(filtered);
+      const subCourseInfo: CourseInfo = {
+        ...course,
+        placeId: `${course.placeId.split('__')[0]}__${sub.id}`,
+        name: `${course.name} — ${sub.name}`,
+        subCourseId: sub.id,
+        subCourseName: sub.name,
+        osmSummary: summary,
+      };
+      onSelectCourse(subCourseInfo, filtered);
+    },
+    [onSelectCourse]
+  );
+
+  const handlePickComboLoops = useCallback(
+    (course: CourseInfo, fullGeometry: OsmCourseGeometry, front: OsmSubCourse, back: OsmSubCourse) => {
+      const comboId = `combo__${front.id}__${back.id}`;
+      const comboName = `${front.name} / ${back.name}`;
+      const filtered = filterGeometryForSubCourse(fullGeometry, comboId);
+      const summary = summarizeOsmGeometry(filtered);
+      const subCourseInfo: CourseInfo = {
+        ...course,
+        placeId: `${course.placeId.split('__')[0]}__${comboId}`,
+        name: `${course.name} — ${comboName}`,
+        subCourseId: comboId,
+        subCourseName: comboName,
+        osmSummary: summary,
+      };
+      onSelectCourse(subCourseInfo, filtered);
+    },
+    [onSelectCourse]
+  );
+
   const handleChooseCourse = useCallback(
     async (course: CourseInfo) => {
       setLoadingCourseId(course.placeId);
       setErrorMessage(null);
       try {
-        const geometry = await fetchCourseGolfGeometry(course);
+        const geometry = await fetchCourseGolfGeometry(course, true);
+        if (geometry.subCourses && geometry.subCourses.length >= 2) {
+          setPendingMultiCourse({ course, geometry });
+          const nineLoops = geometry.subCourses.filter((s) => s.holes.length <= 9);
+          if (nineLoops.length >= 2) {
+            setComboFrontId(nineLoops[0].id);
+            setComboBackId(nineLoops[1].id);
+          } else {
+            setComboFrontId('');
+            setComboBackId('');
+          }
+          return;
+        }
         const summary = summarizeOsmGeometry(geometry);
         onSelectCourse({ ...course, osmSummary: summary }, geometry);
       } catch {
-        onSelectCourse(course, {
-          courseId: course.placeId,
-          fetchedAt: Date.now(),
-          holes: [],
-          greens: [],
-          bunkers: [],
-          waters: [],
-          fairways: [],
-          tees: [],
-        });
+        setErrorMessage(`Could not load hole & scorecard data for ${course.name}. Please try again.`);
       } finally {
         setLoadingCourseId(null);
       }
@@ -112,6 +168,15 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
       void handleNearbySearch();
     }
   }, [userPosition, hasSearched, results.length, handleNearbySearch]);
+
+  const sortedResults = useMemo(() => {
+    if (!userPosition || results.length <= 1) return results;
+    return [...results].sort(
+      (a, b) =>
+        computeDistanceMeters(userPosition, a.location) -
+        computeDistanceMeters(userPosition, b.location)
+    );
+  }, [results, userPosition]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -160,21 +225,9 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                   <span>Refresh Nearby Courses</span>
                 </button>
               ) : (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {FEATURED_QUERIES.map((sample) => (
-                    <button
-                      key={sample}
-                      type="button"
-                      onClick={() => {
-                        setQuery(sample);
-                        void runTextSearch(sample);
-                      }}
-                      className="text-xs font-medium text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
-                    >
-                      {sample}
-                    </button>
-                  ))}
-                </div>
+                <span className="text-xs text-slate-400">
+                  Enable GPS to automatically list closest courses first
+                </span>
               )}
 
               <button
@@ -190,7 +243,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             </div>
           </form>
 
-          <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
+          <div className="divide-y divide-slate-100 max-h-[460px] overflow-y-auto">
             {errorMessage && (
               <div className="p-4 m-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
                 <span>{errorMessage}</span>
@@ -213,58 +266,150 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
               </div>
             )}
 
-            {!isSearching && hasSearched && results.length === 0 && !errorMessage && (
+            {!isSearching && hasSearched && sortedResults.length === 0 && !errorMessage && (
               <div className="p-8 text-center text-sm text-slate-500">
                 No golf courses matched your search. Try adding a city or state name.
               </div>
             )}
 
-            {!isSearching && !hasSearched && results.length === 0 && (
-              <div className="p-8 text-center text-xs text-slate-500 space-y-2">
-                <p>
-                  Enter any golf course name above or pick one of the popular courses to begin your round.
-                </p>
+            {!isSearching && !hasSearched && sortedResults.length === 0 && (
+              <div className="p-8 text-center text-xs text-slate-500">
+                <p>Search for any golf course name, city, or club above to begin your round.</p>
               </div>
             )}
 
-            {results.map((course) => {
+            {sortedResults.map((course) => {
               const isLoadingThis = loadingCourseId === course.placeId;
+              const isMultiExpanded = pendingMultiCourse?.course.placeId === course.placeId;
+              const subCourses = isMultiExpanded ? pendingMultiCourse.geometry.subCourses ?? [] : [];
+
               return (
-                <button
-                  key={course.placeId}
-                  type="button"
-                  disabled={loadingCourseId !== null}
-                  onClick={() => void handleChooseCourse(course)}
-                  className="w-full text-left px-5 py-3.5 min-h-[64px] flex items-center justify-between gap-3 hover:bg-emerald-50/60 disabled:opacity-60 transition-colors"
-                >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
-                      {isLoadingThis ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <MapPin className="w-4 h-4" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#0F1A14] truncate">
-                        {course.name}
+                <div key={course.placeId} className="bg-white">
+                  <button
+                    type="button"
+                    disabled={loadingCourseId !== null}
+                    onClick={() => void handleChooseCourse(course)}
+                    className="w-full text-left px-5 py-3.5 min-h-[64px] flex items-center justify-between gap-3 hover:bg-emerald-50/60 disabled:opacity-60 transition-colors"
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                        {isLoadingThis ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <MapPin className="w-4 h-4" />
+                        )}
                       </div>
-                      {course.formattedAddress && (
-                        <div className="text-xs text-slate-500 truncate mt-0.5">
-                          {course.formattedAddress}
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-[#0F1A14] truncate">
+                          {course.name}
                         </div>
-                      )}
-                      <div className="text-[11px] text-slate-400 mt-0.5">
-                        {course.attributions?.length
-                          ? course.attributions.join(' · ')
-                          : 'OpenStreetMap'}
+                        {course.formattedAddress && (
+                          <div className="text-xs text-slate-500 truncate mt-0.5">
+                            {course.formattedAddress}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          {course.attributions?.length
+                            ? course.attributions.join(' · ')
+                            : 'OpenStreetMap'}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap shrink-0">
-                    {isLoadingThis ? 'Loading...' : 'Start Round'}
-                  </span>
-                </button>
+                    <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap shrink-0">
+                      {isLoadingThis ? 'Loading...' : isMultiExpanded ? 'Select Loop ↓' : 'Start Round'}
+                    </span>
+                  </button>
+
+                  {isMultiExpanded && subCourses.length >= 2 && (
+                    <div className="px-5 pb-4 pt-2 bg-emerald-50/50 border-t border-emerald-100 space-y-3">
+                      <div className="text-xs font-semibold text-emerald-950">
+                        Multiple courses found at {course.name} — choose which course to play:
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {subCourses.map((sub) => {
+                          const totalPar = sub.holes.reduce((acc, h) => acc + (h.par ?? 4), 0);
+                          const displayName = /\b(course|links|nine)\b/i.test(sub.name)
+                            ? sub.name
+                            : `${sub.name} Course`;
+                          return (
+                            <button
+                              key={sub.id}
+                              type="button"
+                              onClick={() =>
+                                handlePickSubCourse(course, pendingMultiCourse.geometry, sub)
+                              }
+                              className="min-h-[48px] px-4 py-2.5 rounded-xl bg-white border border-emerald-200 hover:border-emerald-600 hover:bg-emerald-50 text-left flex items-center justify-between gap-2 transition-colors shadow-2xs"
+                            >
+                              <div>
+                                <div className="text-xs font-bold text-[#0F1A14]">
+                                  {displayName}
+                                </div>
+                                <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                  {sub.holes.length} holes · Par {totalPar}
+                                </div>
+                              </div>
+                              <ChevronRight className="w-4 h-4 text-emerald-700 shrink-0" />
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {(() => {
+                        const nineLoops = subCourses.filter((s) => s.holes.length <= 9);
+                        if (nineLoops.length < 2) return null;
+                        const frontLoop = nineLoops.find((s) => s.id === comboFrontId) ?? nineLoops[0];
+                        const backLoop = nineLoops.find((s) => s.id === comboBackId) ?? nineLoops[1];
+                        return (
+                          <div className="pt-2 border-t border-emerald-200/70 space-y-2">
+                            <div className="text-[11px] font-semibold text-emerald-900">
+                              Or pair two 9-hole loops for 18 holes:
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                value={frontLoop.id}
+                                onChange={(e) => setComboFrontId(e.target.value)}
+                                aria-label="Front 9 loop"
+                                className="h-10 px-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold text-[#0F1A14]"
+                              >
+                                {nineLoops.map((loop) => (
+                                  <option key={loop.id} value={loop.id}>
+                                    Front 9: {loop.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={backLoop.id}
+                                onChange={(e) => setComboBackId(e.target.value)}
+                                aria-label="Back 9 loop"
+                                className="h-10 px-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold text-[#0F1A14]"
+                              >
+                                {nineLoops.map((loop) => (
+                                  <option key={loop.id} value={loop.id}>
+                                    Back 9: {loop.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handlePickComboLoops(
+                                    course,
+                                    pendingMultiCourse.geometry,
+                                    frontLoop,
+                                    backLoop
+                                  )
+                                }
+                                className="h-10 px-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold whitespace-nowrap transition-colors"
+                              >
+                                Play 18 Holes →
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

@@ -58,7 +58,7 @@ export function useGeolocation(): GeolocationState {
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 3000,
+        maximumAge: 1000,
         timeout: 12000,
       }
     );

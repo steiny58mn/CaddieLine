@@ -88,7 +88,7 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
   },
   {
     id: 'green',
-    label: 'On Green',
+    label: 'Green',
     shortLabel: 'Green',
     defaultDirection: 'straight',
     penalty: 0,
@@ -97,7 +97,7 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
   },
   {
     id: 'fringe',
-    label: 'Fringe / Apron',
+    label: 'Fringe',
     shortLabel: 'Fringe',
     defaultDirection: 'straight',
     penalty: 0,
@@ -105,45 +105,27 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
     dotColor: '#65A30D',
   },
   {
-    id: 'left_rough',
-    label: 'Left Rough',
-    shortLabel: 'L Rough',
-    defaultDirection: 'left',
+    id: 'rough',
+    label: 'Rough',
+    shortLabel: 'Rough',
+    defaultDirection: 'straight',
     penalty: 0,
     badgeClass: 'bg-amber-50 text-amber-900 border-amber-200',
     dotColor: '#D97706',
   },
   {
-    id: 'right_rough',
-    label: 'Right Rough',
-    shortLabel: 'R Rough',
-    defaultDirection: 'right',
-    penalty: 0,
-    badgeClass: 'bg-amber-50 text-amber-900 border-amber-200',
-    dotColor: '#D97706',
-  },
-  {
-    id: 'left_trees',
-    label: 'Left Trees',
-    shortLabel: 'L Trees',
-    defaultDirection: 'left',
-    penalty: 0,
-    badgeClass: 'bg-orange-50 text-orange-950 border-orange-200',
-    dotColor: '#EA580C',
-  },
-  {
-    id: 'right_trees',
-    label: 'Right Trees',
-    shortLabel: 'R Trees',
-    defaultDirection: 'right',
+    id: 'trees',
+    label: 'Trees',
+    shortLabel: 'Trees',
+    defaultDirection: 'straight',
     penalty: 0,
     badgeClass: 'bg-orange-50 text-orange-950 border-orange-200',
     dotColor: '#EA580C',
   },
   {
     id: 'sand',
-    label: 'Sand Bunker',
-    shortLabel: 'Sand',
+    label: 'Bunker',
+    shortLabel: 'Bunker',
     defaultDirection: 'straight',
     penalty: 0,
     badgeClass: 'bg-yellow-50 text-yellow-950 border-yellow-300',
@@ -151,7 +133,7 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
   },
   {
     id: 'water',
-    label: 'Water Hazard (+1)',
+    label: 'Water (+1)',
     shortLabel: 'Water',
     defaultDirection: 'straight',
     penalty: 1,
@@ -160,7 +142,7 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
   },
   {
     id: 'ob',
-    label: 'Out of Bounds (+1)',
+    label: 'OB (+1)',
     shortLabel: 'OB (+1)',
     defaultDirection: 'straight',
     penalty: 1,
@@ -169,7 +151,7 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
   },
   {
     id: 'holed',
-    label: 'Holed Out',
+    label: 'Holed',
     shortLabel: 'Holed',
     defaultDirection: 'straight',
     penalty: 0,
@@ -180,14 +162,21 @@ export const LIE_OPTIONS: LieOptionMeta[] = [
 
 export const DIRECTION_OPTIONS: Array<{ id: ShotDirection; label: string; shortLabel: string }> = [
   { id: 'left', label: 'Left / Pull', shortLabel: 'Left' },
-  { id: 'straight', label: 'On Line', shortLabel: 'On Line' },
+  { id: 'straight', label: 'On Line', shortLabel: 'Straight' },
   { id: 'right', label: 'Right / Push', shortLabel: 'Right' },
   { id: 'short', label: 'Short', shortLabel: 'Short' },
   { id: 'long', label: 'Long', shortLabel: 'Long' },
 ];
 
+export function normalizeShotLie(lie: ShotLie): ShotLie {
+  if (lie === 'left_rough' || lie === 'right_rough') return 'rough';
+  if (lie === 'left_trees' || lie === 'right_trees') return 'trees';
+  return lie;
+}
+
 export function getLieMeta(lie: ShotLie): LieOptionMeta {
-  return LIE_OPTIONS.find((item) => item.id === lie) ?? LIE_OPTIONS[0];
+  const normalized = normalizeShotLie(lie);
+  return LIE_OPTIONS.find((item) => item.id === normalized) ?? LIE_OPTIONS[0];
 }
 
 const EARTH_RADIUS_METERS = 6371000;
@@ -507,8 +496,19 @@ export function createInitialRoundState(course: RoundState['course'] = null): Ro
   };
 }
 
+export function isShotPutt(shot: {
+  clubId: string;
+  clubName: string;
+  lie: ShotLie;
+  isPutt?: boolean;
+}): boolean {
+  if (shot.isPutt !== undefined) return shot.isPutt;
+  const isPutterClub = shot.clubId === 'pt' || shot.clubName.toLowerCase().includes('putter');
+  return isPutterClub && (shot.lie === 'green' || shot.lie === 'holed');
+}
+
 export function getLoggedPuttCount(score: HoleScoreState): number {
-  return score.shots.filter((s) => s.clubId === 'pt' || s.clubName.toLowerCase().includes('putter')).length;
+  return score.shots.filter(isShotPutt).length;
 }
 
 export function getEffectivePutts(score: HoleScoreState): number {

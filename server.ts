@@ -106,9 +106,9 @@ async function queryOverpassServer(
 
 // Fallback: fetch raw OSM v0.6 map.json tiles directly from openstreetmap.org and assemble way/relation geometries
 async function fetchViaOsmMapApi(lat: number, lng: number): Promise<OverpassElement[]> {
-  const halfSpanLat = 0.011;
+  const halfSpanLat = 0.0175;
   const cosLat = Math.max(0.25, Math.cos((lat * Math.PI) / 180));
-  const halfSpanLng = 0.011 / cosLat;
+  const halfSpanLng = 0.0175 / cosLat;
 
   const tiles = [
     [lng - halfSpanLng, lat - halfSpanLat, lng, lat],
@@ -223,22 +223,30 @@ async function startServer() {
     }
 
     const ql = `
-[out:json][timeout:15];
+[out:json][timeout:6];
 (
-  way["leisure"="golf_course"](around:500,${lat.toFixed(6)},${lng.toFixed(6)});
-  relation["leisure"="golf_course"](around:500,${lat.toFixed(6)},${lng.toFixed(6)});
-  way["golf"](around:2000,${lat.toFixed(6)},${lng.toFixed(6)});
-  relation["golf"](around:2000,${lat.toFixed(6)},${lng.toFixed(6)});
-  way["natural"="water"](around:1400,${lat.toFixed(6)},${lng.toFixed(6)});
+  way["leisure"="golf_course"](around:1000,${lat.toFixed(6)},${lng.toFixed(6)});
+  relation["leisure"="golf_course"](around:1000,${lat.toFixed(6)},${lng.toFixed(6)});
+  way["golf"](around:2800,${lat.toFixed(6)},${lng.toFixed(6)});
+  relation["golf"](around:2800,${lat.toFixed(6)},${lng.toFixed(6)});
+  way["natural"="water"](around:1800,${lat.toFixed(6)},${lng.toFixed(6)});
 );
 out geom;
 `.trim();
 
     try {
-      const { elements, endpoint } = await queryOverpassServer(ql);
-      geometryCache.set(cacheKey, { timestamp: Date.now(), elements, source: endpoint });
-      res.json({ elements, source: endpoint });
-      return;
+      const { elements, endpoint } = await Promise.race([
+        queryOverpassServer(ql, 5500),
+        new Promise<{ elements: OverpassElement[]; endpoint: string }>((_, reject) =>
+          setTimeout(() => reject(new Error('Overpass geometry timeout')), 7000)
+        ),
+      ]);
+      if (elements.length > 0) {
+        geometryCache.set(cacheKey, { timestamp: Date.now(), elements, source: endpoint });
+        res.json({ elements, source: endpoint });
+        return;
+      }
+      throw new Error('Overpass returned 0 golf elements');
     } catch (overpassErr) {
       try {
         const elements = await fetchViaOsmMapApi(lat, lng);
@@ -293,8 +301,9 @@ out geom;
       const norm = normalizeCourseName(item.name);
       const existingIdx = out.findIndex((prev) => {
         const dist = haversineMeters(prev.lat, prev.lng, item.lat, item.lng);
-        if (dist < 650) return true;
-        if (dist < 2200 && norm && norm === normalizeCourseName(prev.name)) return true;
+        const prevNorm = normalizeCourseName(prev.name);
+        if (dist < 2500 && norm && prevNorm && norm === prevNorm) return true;
+        if (dist < 150) return true;
         return false;
       });
       if (existingIdx === -1) {
@@ -645,11 +654,27 @@ out center 30;
       }
     }
 
-    const deduped = deduplicateCourses(combined)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
+    const deduped = deduplicateCourses(combined);
 
-    res.json({ courses: deduped });
+    if (near) {
+      const sorted = deduped
+        .map((c) => {
+          const distMeters = haversineMeters(near.lat, near.lng, c.lat, c.lng);
+          const miles = (distMeters / 1609.344).toFixed(1);
+          return {
+            ...c,
+            distMeters,
+            formattedAddress: c.formattedAddress ? `${miles} mi · ${c.formattedAddress}` : `${miles} mi away`,
+          };
+        })
+        .sort((a, b) => a.distMeters - b.distMeters)
+        .slice(0, 15);
+      res.json({ courses: sorted });
+      return;
+    }
+
+    const sortedByScore = deduped.sort((a, b) => b.score - a.score).slice(0, 15);
+    res.json({ courses: sortedByScore });
   });
 
   const httpServer = http.createServer(app);
