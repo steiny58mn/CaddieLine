@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, Save } from 'lucide-react';
 import { DistanceUnit, HolePinData, HoleScoreState, RoundState } from '../types/golf';
+import { formatTeeSummaryLabel } from '../services/golfCourseApiService';
 import {
   formatDistanceValue,
   formatRelativeToPar,
@@ -19,6 +20,7 @@ interface ScorecardViewProps {
   onSelectHole: (holeNumber: number) => void;
   onUpdateHoleMeta: (holeNumber: number, patch: Partial<HolePinData>) => void;
   onOverrideHoleScore: (holeNumber: number, score: number | undefined) => void;
+  onSelectTee?: (teeId: string) => void;
   onSaveRound: () => void;
   onResetRound: () => void;
 }
@@ -152,6 +154,16 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
             </tr>
 
             <tr>
+              <td className="py-2 px-3 text-left font-medium text-slate-500">Hcp</td>
+              {holeNumbers.map((num) => (
+                <td key={num} className="py-2 px-1 font-mono text-slate-400 tabular-nums">
+                  {holes[num].handicap}
+                </td>
+              ))}
+              <td className="py-2 px-3 font-mono text-slate-400 bg-slate-50">—</td>
+            </tr>
+
+            <tr>
               <td className="py-2.5 px-3 text-left font-semibold text-[#0F1A14]">Score</td>
               {holeNumbers.map((num) => {
                 const strokes = getHoleStrokes(scores[num]);
@@ -247,6 +259,7 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
   onSelectHole,
   onUpdateHoleMeta,
   onOverrideHoleScore,
+  onSelectTee,
   onSaveRound,
   onResetRound,
 }) => {
@@ -265,6 +278,10 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
   );
   const girHits = playedHoles.filter((n) => getHoleGIR(round.scores[n], round.holes[n].par));
 
+  const availableTees = round.course?.availableTees ?? [];
+  const activeTee =
+    availableTees.find((t) => t.id === round.course?.selectedTeeId) ?? availableTees[0];
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-24 lg:pb-8">
       {/* Header & Summary Strip */}
@@ -272,6 +289,9 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
         <div>
           <div className="text-xs font-medium text-slate-500">
             {round.course ? round.course.name : 'Active 18-Hole Round'} · Par {totalPar}
+            {activeTee?.courseRating && activeTee?.slopeRating
+              ? ` · Rating ${activeTee.courseRating} / Slope ${activeTee.slopeRating}`
+              : ''}
           </div>
           <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0F1A14] mt-0.5">
             Official Round Scorecard
@@ -279,6 +299,21 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {availableTees.length > 0 && onSelectTee && (
+            <select
+              value={activeTee?.id ?? ''}
+              onChange={(e) => onSelectTee(e.target.value)}
+              aria-label="Select tee set"
+              className="min-h-[44px] max-w-[230px] px-3 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-[#0F1A14] focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            >
+              {availableTees.map((tee) => (
+                <option key={tee.id} value={tee.id}>
+                  {formatTeeSummaryLabel(tee)}
+                </option>
+              ))}
+            </select>
+          )}
+
           <button
             type="button"
             onClick={onSaveRound}

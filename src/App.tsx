@@ -32,6 +32,12 @@ import {
   getCachedOsmCourseGeometry,
   summarizeOsmGeometry,
 } from './services/osmGolfService';
+import {
+  applyTeeSetToHoles,
+  fetchGolfCourseMatch,
+  matchSubCourseNameToGca,
+  pickDefaultTee,
+} from './services/golfCourseApiService';
 import { useGeolocation } from './hooks/useGeolocation';
 import { NfcTapPayload, useWebNfc } from './hooks/useWebNfc';
 import { OpenGolfHoleMap } from './components/OpenGolfHoleMap';
@@ -144,9 +150,13 @@ export default function App() {
           greenPolygon: fresh.greenPolygon ?? existing?.greenPolygon,
         };
       }
+      const activeTee =
+        prev.course?.availableTees?.find((t) => t.id === prev.course?.selectedTeeId) ??
+        pickDefaultTee(prev.course?.availableTees ?? []);
+      const holesWithTee = activeTee ? applyTeeSetToHoles(mergedHoles, activeTee) : mergedHoles;
       return {
         ...prev,
-        holes: mergedHoles,
+        holes: holesWithTee,
       };
     });
   }, []);
@@ -1053,11 +1063,18 @@ export default function App() {
       setCourseGeometry(geometry);
       setGeometryError(null);
       syncedCourseHolesRef.current = course.placeId;
-      const populatedHoles = applyOsmGeometryToHoles(geometry);
+      const osmHoles = applyOsmGeometryToHoles(geometry);
+      const selectedTee =
+        course.availableTees?.find((t) => t.id === course.selectedTeeId) ??
+        pickDefaultTee(course.availableTees ?? []);
+      const populatedHoles = selectedTee ? applyTeeSetToHoles(osmHoles, selectedTee) : osmHoles;
+      const hydratedCourse: CourseInfo = selectedTee
+        ? { ...course, selectedTeeId: selectedTee.id }
+        : course;
 
       // Determine starting hole: detect nearest tee if player is on the course (< 5km), else default to Hole #1
       let startingHole = 1;
-      if (geo.position && computeDistanceMeters(geo.position, course.location) <= 5000) {
+      if (geo.position && computeDistanceMeters(geo.position, hydratedCourse.location) <= 5000) {
         let closestDist = 350;
         for (let num = 1; num <= 18; num += 1) {
           const tee = populatedHoles[num]?.teeLatLng;
@@ -1070,7 +1087,7 @@ export default function App() {
         }
       }
 
-      const freshRound = createInitialRoundState(course);
+      const freshRound = createInitialRoundState(hydratedCourse);
       freshRound.currentHole = startingHole;
       freshRound.holes = populatedHoles;
       setRound(freshRound);
@@ -1089,15 +1106,40 @@ export default function App() {
     [geo.position, nfc]
   );
 
+  const handleSelectTee = useCallback((teeId: string) => {
+    setRound((prev) => {
+      const tee = prev.course?.availableTees?.find((t) => t.id === teeId);
+      if (!tee || !prev.course) return prev;
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        course: {
+          ...prev.course,
+          selectedTeeId: tee.id,
+        },
+        holes: applyTeeSetToHoles(prev.holes, tee),
+      };
+    });
+  }, []);
+
   const handleRefreshOsmCourse = useCallback(async () => {
     if (!round.course) return;
     setIsLoadingGeometry(true);
     setGeometryError(null);
     try {
-      const geometry = await fetchCourseGolfGeometry(round.course, true);
+      const [geometry, gcaMatchRes] = await Promise.all([
+        fetchCourseGolfGeometry(round.course, true),
+        !round.course.availableTees?.length
+          ? fetchGolfCourseMatch(round.course)
+          : Promise.resolve({ configured: true, matches: [] }),
+      ]);
       setCourseGeometry(geometry);
       const summary = summarizeOsmGeometry(geometry);
       const populatedHoles = applyOsmGeometryToHoles(geometry);
+      const matchedGca = gcaMatchRes.matches.length
+        ? matchSubCourseNameToGca(round.course.subCourseName || round.course.courseName, gcaMatchRes.matches)
+        : undefined;
+
       setRound((prev) => {
         const mergedHoles: Record<number, HolePinData> = {};
         for (let i = 1; i <= 18; i += 1) {
@@ -1113,10 +1155,26 @@ export default function App() {
             greenPolygon: fresh.greenPolygon ?? existing?.greenPolygon,
           };
         }
+        const nextTees = prev.course?.availableTees?.length
+          ? prev.course.availableTees
+          : matchedGca?.tees;
+        const activeTee =
+          nextTees?.find((t) => t.id === prev.course?.selectedTeeId) ??
+          pickDefaultTee(nextTees ?? []);
+        const holesWithTee = activeTee ? applyTeeSetToHoles(mergedHoles, activeTee) : mergedHoles;
+
         return {
           ...prev,
-          course: prev.course ? { ...prev.course, osmSummary: summary } : prev.course,
-          holes: mergedHoles,
+          course: prev.course
+            ? {
+                ...prev.course,
+                osmSummary: summary,
+                availableTees: nextTees,
+                selectedTeeId: activeTee?.id ?? prev.course.selectedTeeId,
+                golfCourseApiId: prev.course.golfCourseApiId ?? matchedGca?.id,
+              }
+            : prev.course,
+          holes: holesWithTee,
           updatedAt: Date.now(),
         };
       });
@@ -1390,6 +1448,7 @@ export default function App() {
               }}
               onUpdateHoleMeta={handleUpdateHoleMeta}
               onOverrideHoleScore={handleOverrideHoleScore}
+              onSelectTee={handleSelectTee}
               onSaveRound={handleSaveRound}
               onResetRound={handleResetRound}
             />

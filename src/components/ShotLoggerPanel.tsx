@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
 import {
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
   Ban,
   CheckCircle2,
   ChevronDown,
@@ -78,6 +75,54 @@ const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
   >
     <path d="M16 3v14c0 1.7-1.3 3-3 3H7.5a1.5 1.5 0 0 1 0-3H13" />
     <circle cx="5" cy="19" r="1.5" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+const CurvedLeftArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.15"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M16 19.5C16 12.5 13 8.5 6.5 6.5" />
+    <path d="M11 4.5 6.5 6.5l2 4.5" />
+  </svg>
+);
+
+const StraightUpArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.15"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M12 19.5V5" />
+    <path d="M7.5 9.5 12 5l4.5 4.5" />
+  </svg>
+);
+
+const CurvedRightArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.15"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M8 19.5C8 12.5 11 8.5 17.5 6.5" />
+    <path d="M13 4.5 17.5 6.5l-2 4.5" />
   </svg>
 );
 
@@ -283,8 +328,8 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </button>
         </div>
 
-        {/* Compact Live Shot Distance + Previous Shot Strip inside Hole Panel */}
-        <div className="pt-1.5 border-t border-slate-200/80 flex items-center justify-between gap-2 text-[11px] leading-tight">
+        {/* Centered Live Shot Distance + Previous Shot Strip inside Hole Panel */}
+        <div className="pt-1.5 border-t border-slate-200/80 flex items-center justify-center flex-wrap gap-x-3 gap-y-1 text-[11px] leading-tight text-center">
           <div className="inline-flex items-center gap-1.5 font-mono tabular-nums shrink-0">
             <span
               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -300,7 +345,11 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             </strong>
           </div>
 
-          <div className="inline-flex items-center gap-1 min-w-0 text-right truncate text-slate-600">
+          <span className="text-slate-300" aria-hidden="true">
+            |
+          </span>
+
+          <div className="inline-flex items-center gap-1 min-w-0 max-w-full text-slate-600">
             <History className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             {previousShot ? (
               <span className="truncate tabular-nums">
@@ -378,126 +427,127 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         )}
 
-        {/* Club Selected, Direction Arrows & Log Shot Panel */}
-        <div className="rounded-2xl border border-slate-200 bg-[#FAFBFA] p-3 space-y-3">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <label htmlFor="club-selected-dropdown" className="text-xs font-semibold text-slate-700">
-                Club Selected & Direction
-              </label>
-              {bag.length === 0 ? (
-                <button
-                  type="button"
-                  onClick={onOpenBagNfc}
-                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
-                >
-                  Pair Saved Clubs →
-                </button>
-              ) : (
-                <span className="text-xs font-mono text-slate-500 tabular-nums">
-                  Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <select
-                id="club-selected-dropdown"
-                value={selectedClub?.id ?? ''}
-                onChange={(e) => onSelectClub(e.target.value)}
-                className="flex-1 min-w-0 h-11 px-3 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-[#0F1A14] focus:outline-none focus:ring-2 focus:ring-emerald-600"
+        {/* Single-Row Club Selected, Direction Arrows, Flag Log Shot & Undo Panel */}
+        <div className="rounded-2xl border border-slate-200 bg-[#FAFBFA] p-2.5 sm:p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="club-selected-dropdown" className="text-xs font-semibold text-slate-700">
+              Club Selected & Direction
+            </label>
+            {bag.length === 0 ? (
+              <button
+                type="button"
+                onClick={onOpenBagNfc}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
               >
-                {bag.length > 0 ? (
-                  bag.map((club) => (
-                    <option key={club.id} value={club.id}>
-                      {club.name} ({club.shortName})
-                    </option>
-                  ))
-                ) : (
-                  <>
-                    <option value="" disabled>
-                      No clubs paired yet
-                    </option>
-                    {CLUB_PRESETS.map((club) => (
-                      <option key={club.id} value={club.id}>
-                        {club.name} ({club.shortName})
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
-
-              <div
-                className="inline-flex items-center gap-1 shrink-0"
-                role="group"
-                aria-label="Shot direction"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectDirection('left')}
-                  className={`h-11 w-11 rounded-xl border flex items-center justify-center transition-colors ${
-                    selectedDirection === 'left'
-                      ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                  aria-label="Left direction"
-                  title="Left"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSelectDirection('straight')}
-                  className={`h-11 w-11 rounded-xl border flex items-center justify-center transition-colors ${
-                    selectedDirection === 'straight'
-                      ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                  aria-label="Straight direction"
-                  title="Straight"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSelectDirection('right')}
-                  className={`h-11 w-11 rounded-xl border flex items-center justify-center transition-colors ${
-                    selectedDirection === 'right'
-                      ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                  aria-label="Right direction"
-                  title="Right"
-                >
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+                Pair Saved Clubs →
+              </button>
+            ) : (
+              <span className="text-xs font-mono text-slate-500 tabular-nums">
+                Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <select
+              id="club-selected-dropdown"
+              value={selectedClub?.id ?? ''}
+              onChange={(e) => onSelectClub(e.target.value)}
+              className="flex-1 min-w-0 h-11 px-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm font-semibold text-[#0F1A14] focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            >
+              {bag.length > 0 ? (
+                bag.map((club) => (
+                  <option key={club.id} value={club.id}>
+                    {club.shortName} · {club.name}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="" disabled>
+                    No clubs paired
+                  </option>
+                  {CLUB_PRESETS.map((club) => (
+                    <option key={club.id} value={club.id}>
+                      {club.shortName} · {club.name}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
+
+            <div
+              className="inline-flex items-center gap-1 sm:gap-1.5 shrink-0"
+              role="group"
+              aria-label="Shot direction"
+            >
+              <button
+                type="button"
+                onClick={() => onSelectDirection('left')}
+                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
+                  selectedDirection === 'left'
+                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+                aria-label="Left direction"
+                title="Left"
+              >
+                <CurvedLeftArrowIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectDirection('straight')}
+                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
+                  selectedDirection === 'straight'
+                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+                aria-label="Straight direction"
+                title="Straight"
+              >
+                <StraightUpArrowIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectDirection('right')}
+                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
+                  selectedDirection === 'right'
+                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+                aria-label="Right direction"
+                title="Right"
+              >
+                <CurvedRightArrowIcon />
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={onLogShot}
-              className="flex-1 h-11 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-semibold text-sm shadow-sm flex items-center justify-center gap-2 transition-all"
-            >
-              <Flag className="w-4 h-4" />
-              <span>
-                {hasOpenNfcShot
+              className="h-11 w-[42px] sm:w-12 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white shadow-sm flex items-center justify-center shrink-0 transition-all"
+              title={
+                hasOpenNfcShot
                   ? `Finish Shot #${holeScore.shots.length} · ${lastShot.clubShortName} (${getLieMeta(selectedLie).shortLabel})`
-                  : `Log Shot #${holeScore.shots.length + 1} · ${selectedClub?.shortName ?? 'Club'} (${getLieMeta(selectedLie).shortLabel})`}
-              </span>
+                  : `Log Shot #${holeScore.shots.length + 1} · ${selectedClub?.shortName ?? 'Club'} (${getLieMeta(selectedLie).shortLabel})`
+              }
+              aria-label={
+                hasOpenNfcShot
+                  ? `Finish Shot ${holeScore.shots.length}`
+                  : `Log Shot ${holeScore.shots.length + 1}`
+              }
+            >
+              <Flag className="w-[18px] h-[18px]" />
             </button>
+
             <button
               type="button"
               onClick={onUndoLastShot}
               disabled={!canUndo}
-              className="h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 text-xs font-semibold shrink-0 transition-colors"
+              className="h-11 w-[42px] sm:w-12 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center shrink-0 transition-colors"
               title="Undo last shot or putt"
               aria-label="Undo last shot"
             >
-              <RotateCcw className="w-4 h-4" />
-              <span>Undo</span>
+              <RotateCcw className="w-[18px] h-[18px]" />
             </button>
           </div>
         </div>

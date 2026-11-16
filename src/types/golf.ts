@@ -132,6 +132,45 @@ export interface HoleScoreState {
   manualScoreOverride?: number;
 }
 
+export interface GolfCourseTeeHole {
+  holeNumber: number;
+  par: number;
+  yardage: number;
+  handicap: number;
+}
+
+export interface GolfCourseTeeSet {
+  id: string;
+  gender: 'male' | 'female';
+  teeName: string;
+  color?: string;
+  courseRating?: number;
+  slopeRating?: number;
+  bogeyRating?: number;
+  totalYards?: number;
+  totalMeters?: number;
+  numberOfHoles?: number;
+  parTotal?: number;
+  frontCourseRating?: number;
+  frontSlopeRating?: number;
+  backCourseRating?: number;
+  backSlopeRating?: number;
+  holes: GolfCourseTeeHole[];
+}
+
+export interface GolfCourseDetail {
+  id: string;
+  clubName: string;
+  courseName: string;
+  displayName: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  location?: LatLngLiteral;
+  tees: GolfCourseTeeSet[];
+}
+
 export interface CourseInfo {
   placeId: string;
   name: string;
@@ -141,6 +180,11 @@ export interface CourseInfo {
   osmSummary?: OsmCourseSummary;
   subCourseId?: string;
   subCourseName?: string;
+  golfCourseApiId?: string;
+  clubName?: string;
+  courseName?: string;
+  availableTees?: GolfCourseTeeSet[];
+  selectedTeeId?: string;
 }
 
 export interface RoundState {

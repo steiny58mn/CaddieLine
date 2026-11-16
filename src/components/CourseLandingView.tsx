@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Compass, Loader2, MapPin, Nfc, Search, Trash2 } from 'lucide-react';
 import {
   CourseInfo,
+  GolfCourseDetail,
   LatLngLiteral,
   OsmCourseGeometry,
   OsmSubCourse,
@@ -15,11 +16,27 @@ import {
   summarizeOsmGeometry,
 } from '../services/osmGolfService';
 import {
+  combineSubCourseTees,
+  fetchGolfCourseMatch,
+  matchSubCourseNameToGca,
+  pickDefaultTee,
+} from '../services/golfCourseApiService';
+import {
   computeDistanceMeters,
   formatRelativeToPar,
   getHoleStrokes,
   isHolePlayed,
 } from '../utils/golfMath';
+
+interface PendingLoopOption {
+  id: string;
+  name: string;
+  holeCount: number;
+  parTotal: number;
+  yardageTotal?: number;
+  osmSub?: OsmSubCourse;
+  gcaDetail?: GolfCourseDetail;
+}
 
 interface CourseLandingViewProps {
   userPosition: LatLngLiteral | null;
@@ -29,6 +46,30 @@ interface CourseLandingViewProps {
   onLoadSavedRound: (round: RoundState) => void;
   onDeleteSavedRound: (roundId: string) => void;
   onOpenBagNfc: () => void;
+}
+
+function normalizeLoopCompare(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(the|golf|course|club|links|nine)\b/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function findExactOrCloseGcaMatch(
+  loopName: string,
+  matches: GolfCourseDetail[]
+): GolfCourseDetail | undefined {
+  const target = normalizeLoopCompare(loopName);
+  if (!target) return undefined;
+  return matches.find((m) => {
+    const cNorm = normalizeLoopCompare(m.courseName);
+    const dNorm = normalizeLoopCompare(m.displayName);
+    return (
+      cNorm === target ||
+      (cNorm.length >= 3 && (cNorm.includes(target) || target.includes(cNorm))) ||
+      (dNorm.length >= 3 && target.length >= 3 && dNorm.includes(target))
+    );
+  });
 }
 
 export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
@@ -49,6 +90,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   const [pendingMultiCourse, setPendingMultiCourse] = useState<{
     course: CourseInfo;
     geometry: OsmCourseGeometry;
+    loops: PendingLoopOption[];
   } | null>(null);
   const [comboFrontId, setComboFrontId] = useState<string>('');
   const [comboBackId, setComboBackId] = useState<string>('');
@@ -99,16 +141,33 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   );
 
   const handlePickSubCourse = useCallback(
-    (course: CourseInfo, fullGeometry: OsmCourseGeometry, sub: OsmSubCourse) => {
-      const filtered = filterGeometryForSubCourse(fullGeometry, sub.id);
+    (course: CourseInfo, fullGeometry: OsmCourseGeometry, loop: PendingLoopOption) => {
+      const filtered = loop.osmSub
+        ? filterGeometryForSubCourse(fullGeometry, loop.osmSub.id)
+        : fullGeometry;
       const summary = summarizeOsmGeometry(filtered);
+      const tees = loop.gcaDetail?.tees ?? [];
+      const defaultTee = pickDefaultTee(tees);
+      const attributions = Array.from(
+        new Set([
+          ...(course.attributions ?? []),
+          ...(tees.length > 0 ? ['GolfCourseAPI'] : []),
+          'OpenStreetMap',
+        ])
+      );
       const subCourseInfo: CourseInfo = {
         ...course,
-        placeId: `${course.placeId.split('__')[0]}__${sub.id}`,
-        name: `${course.name} — ${sub.name}`,
-        subCourseId: sub.id,
-        subCourseName: sub.name,
+        placeId: `${course.placeId.split('__')[0]}__${loop.id}`,
+        name: `${course.name.split('—')[0].trim()} — ${loop.name}`,
+        subCourseId: loop.osmSub?.id ?? loop.id,
+        subCourseName: loop.name,
         osmSummary: summary,
+        attributions,
+        golfCourseApiId: loop.gcaDetail?.id ?? course.golfCourseApiId,
+        clubName: loop.gcaDetail?.clubName ?? course.clubName,
+        courseName: loop.gcaDetail?.courseName ?? loop.name,
+        availableTees: tees.length > 0 ? tees : undefined,
+        selectedTeeId: defaultTee?.id,
       };
       onSelectCourse(subCourseInfo, filtered);
     },
@@ -116,18 +175,43 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   );
 
   const handlePickComboLoops = useCallback(
-    (course: CourseInfo, fullGeometry: OsmCourseGeometry, front: OsmSubCourse, back: OsmSubCourse) => {
+    (
+      course: CourseInfo,
+      fullGeometry: OsmCourseGeometry,
+      front: PendingLoopOption,
+      back: PendingLoopOption
+    ) => {
       const comboId = `combo__${front.id}__${back.id}`;
       const comboName = `${front.name} / ${back.name}`;
-      const filtered = filterGeometryForSubCourse(fullGeometry, comboId);
+      const filtered =
+        front.osmSub && back.osmSub
+          ? filterGeometryForSubCourse(fullGeometry, `combo__${front.osmSub.id}__${back.osmSub.id}`)
+          : fullGeometry;
       const summary = summarizeOsmGeometry(filtered);
+
+      const combinedTees =
+        front.gcaDetail && back.gcaDetail
+          ? combineSubCourseTees(front.gcaDetail, back.gcaDetail)
+          : front.gcaDetail?.tees ?? back.gcaDetail?.tees ?? [];
+      const defaultTee = pickDefaultTee(combinedTees);
+      const attributions = Array.from(
+        new Set([
+          ...(course.attributions ?? []),
+          ...(combinedTees.length > 0 ? ['GolfCourseAPI'] : []),
+          'OpenStreetMap',
+        ])
+      );
+
       const subCourseInfo: CourseInfo = {
         ...course,
         placeId: `${course.placeId.split('__')[0]}__${comboId}`,
-        name: `${course.name} — ${comboName}`,
-        subCourseId: comboId,
+        name: `${course.name.split('—')[0].trim()} — ${comboName}`,
+        subCourseId: front.osmSub && back.osmSub ? `combo__${front.osmSub.id}__${back.osmSub.id}` : comboId,
         subCourseName: comboName,
         osmSummary: summary,
+        attributions,
+        availableTees: combinedTees.length > 0 ? combinedTees : undefined,
+        selectedTeeId: defaultTee?.id,
       };
       onSelectCourse(subCourseInfo, filtered);
     },
@@ -139,10 +223,95 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
       setLoadingCourseId(course.placeId);
       setErrorMessage(null);
       try {
-        const geometry = await fetchCourseGolfGeometry(course, true);
-        if (geometry.subCourses && geometry.subCourses.length >= 2) {
-          setPendingMultiCourse({ course, geometry });
-          const nineLoops = geometry.subCourses.filter((s) => s.holes.length <= 9);
+        const [geomResult, gcaResult] = await Promise.allSettled([
+          fetchCourseGolfGeometry(course, true),
+          fetchGolfCourseMatch(course),
+        ]);
+
+        const gcaMatches =
+          gcaResult.status === 'fulfilled' ? gcaResult.value.matches : [];
+
+        if (geomResult.status === 'rejected' && gcaMatches.length === 0) {
+          throw new Error('Both OSM and GolfCourseAPI failed');
+        }
+
+        const geometry: OsmCourseGeometry =
+          geomResult.status === 'fulfilled'
+            ? geomResult.value
+            : {
+                courseId: course.placeId.split('__')[0],
+                fetchedAt: Date.now(),
+                holes: [],
+                greens: [],
+                bunkers: [],
+                waters: [],
+                fairways: [],
+                tees: [],
+              };
+
+        const osmSubs = geometry.subCourses ?? [];
+        const loops: PendingLoopOption[] = [];
+
+        if (osmSubs.length >= 2) {
+          const matchedGcaIds = new Set<string>();
+          for (const sub of osmSubs) {
+            const gca = findExactOrCloseGcaMatch(sub.name, gcaMatches);
+            if (gca) matchedGcaIds.add(gca.id);
+            const gcaDefaultTee = gca ? pickDefaultTee(gca.tees) : undefined;
+            const parTotal =
+              gcaDefaultTee?.parTotal ??
+              (gcaDefaultTee?.holes.length
+                ? gcaDefaultTee.holes.reduce((acc, h) => acc + h.par, 0)
+                : sub.holes.reduce((acc, h) => acc + (h.par ?? 4), 0));
+            loops.push({
+              id: sub.id,
+              name: sub.name,
+              holeCount: gcaDefaultTee?.numberOfHoles ?? sub.holes.length,
+              parTotal,
+              yardageTotal: gcaDefaultTee?.totalYards,
+              osmSub: sub,
+              gcaDetail: gca,
+            });
+          }
+
+          // Include any extra courses at the club found in GolfCourseAPI that OSM missed (e.g. Par 3 course)
+          for (const gca of gcaMatches) {
+            if (matchedGcaIds.has(gca.id)) continue;
+            const defaultTee = pickDefaultTee(gca.tees);
+            const holeCount = defaultTee?.numberOfHoles ?? defaultTee?.holes.length ?? 18;
+            const parTotal =
+              defaultTee?.parTotal ??
+              (defaultTee?.holes.reduce((acc, h) => acc + h.par, 0) || holeCount * 4);
+            loops.push({
+              id: `gca_${gca.id}`,
+              name: gca.courseName || gca.displayName,
+              holeCount,
+              parTotal,
+              yardageTotal: defaultTee?.totalYards,
+              gcaDetail: gca,
+            });
+          }
+        } else if (gcaMatches.length >= 2) {
+          for (const gca of gcaMatches) {
+            const defaultTee = pickDefaultTee(gca.tees);
+            const holeCount = defaultTee?.numberOfHoles ?? defaultTee?.holes.length ?? 18;
+            const parTotal =
+              defaultTee?.parTotal ??
+              (defaultTee?.holes.reduce((acc, h) => acc + h.par, 0) || holeCount * 4);
+            loops.push({
+              id: `gca_${gca.id}`,
+              name: gca.courseName || gca.displayName,
+              holeCount,
+              parTotal,
+              yardageTotal: defaultTee?.totalYards,
+              gcaDetail: gca,
+            });
+          }
+        }
+
+        if (loops.length >= 2) {
+          setPendingMultiCourse({ course, geometry, loops });
+          const nineLoops = loops.filter((l) => l.holeCount <= 9);
           if (nineLoops.length >= 2) {
             setComboFrontId(nineLoops[0].id);
             setComboBackId(nineLoops[1].id);
@@ -152,8 +321,34 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
           }
           return;
         }
+
+        const matchedGca =
+          loops[0]?.gcaDetail ??
+          matchSubCourseNameToGca(course.courseName || course.subCourseName, gcaMatches);
+        const tees = matchedGca?.tees ?? [];
+        const defaultTee = pickDefaultTee(tees);
         const summary = summarizeOsmGeometry(geometry);
-        onSelectCourse({ ...course, osmSummary: summary }, geometry);
+        const attributions = Array.from(
+          new Set([
+            ...(course.attributions ?? []),
+            ...(tees.length > 0 ? ['GolfCourseAPI'] : []),
+            'OpenStreetMap',
+          ])
+        );
+
+        onSelectCourse(
+          {
+            ...course,
+            osmSummary: summary,
+            attributions,
+            golfCourseApiId: matchedGca?.id ?? course.golfCourseApiId,
+            clubName: matchedGca?.clubName ?? course.clubName,
+            courseName: matchedGca?.courseName ?? course.courseName,
+            availableTees: tees.length > 0 ? tees : undefined,
+            selectedTeeId: defaultTee?.id,
+          },
+          geometry
+        );
       } catch {
         setErrorMessage(`Could not load hole & scorecard data for ${course.name}. Please try again.`);
       } finally {
@@ -281,7 +476,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             {sortedResults.map((course) => {
               const isLoadingThis = loadingCourseId === course.placeId;
               const isMultiExpanded = pendingMultiCourse?.course.placeId === course.placeId;
-              const subCourses = isMultiExpanded ? pendingMultiCourse.geometry.subCourses ?? [] : [];
+              const loopOptions = isMultiExpanded ? pendingMultiCourse.loops : [];
 
               return (
                 <div key={course.placeId} className="bg-white">
@@ -320,23 +515,22 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                     </span>
                   </button>
 
-                  {isMultiExpanded && subCourses.length >= 2 && (
+                  {isMultiExpanded && loopOptions.length >= 2 && (
                     <div className="px-5 pb-4 pt-2 bg-emerald-50/50 border-t border-emerald-100 space-y-3">
                       <div className="text-xs font-semibold text-emerald-950">
                         Multiple courses found at {course.name} — choose which course to play:
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {subCourses.map((sub) => {
-                          const totalPar = sub.holes.reduce((acc, h) => acc + (h.par ?? 4), 0);
-                          const displayName = /\b(course|links|nine)\b/i.test(sub.name)
-                            ? sub.name
-                            : `${sub.name} Course`;
+                        {loopOptions.map((loop) => {
+                          const displayName = /\b(course|links|nine)\b/i.test(loop.name)
+                            ? loop.name
+                            : `${loop.name} Course`;
                           return (
                             <button
-                              key={sub.id}
+                              key={loop.id}
                               type="button"
                               onClick={() =>
-                                handlePickSubCourse(course, pendingMultiCourse.geometry, sub)
+                                handlePickSubCourse(course, pendingMultiCourse.geometry, loop)
                               }
                               className="min-h-[48px] px-4 py-2.5 rounded-xl bg-white border border-emerald-200 hover:border-emerald-600 hover:bg-emerald-50 text-left flex items-center justify-between gap-2 transition-colors shadow-2xs"
                             >
@@ -345,7 +539,8 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                                   {displayName}
                                 </div>
                                 <div className="text-[11px] text-slate-500 font-mono tabular-nums">
-                                  {sub.holes.length} holes · Par {totalPar}
+                                  {loop.holeCount} holes · Par {loop.parTotal}
+                                  {loop.yardageTotal ? ` · ${loop.yardageTotal.toLocaleString()} yds` : ''}
                                 </div>
                               </div>
                               <ChevronRight className="w-4 h-4 text-emerald-700 shrink-0" />
@@ -355,7 +550,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                       </div>
 
                       {(() => {
-                        const nineLoops = subCourses.filter((s) => s.holes.length <= 9);
+                        const nineLoops = loopOptions.filter((l) => l.holeCount <= 9);
                         if (nineLoops.length < 2) return null;
                         const frontLoop = nineLoops.find((s) => s.id === comboFrontId) ?? nineLoops[0];
                         const backLoop = nineLoops.find((s) => s.id === comboBackId) ?? nineLoops[1];

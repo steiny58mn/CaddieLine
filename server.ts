@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import http from 'http';
@@ -39,8 +40,143 @@ interface OverpassElement {
 
 const geometryCache = new Map<string, { timestamp: number; elements: OverpassElement[]; source: string }>();
 const nearbyCache = new Map<string, { timestamp: number; courses: unknown[] }>();
+const golfCourseSearchCache = new Map<string, { timestamp: number; courses: ServerGolfCourseDetail[] }>();
+const golfCourseDetailCache = new Map<string, { timestamp: number; course: ServerGolfCourseDetail }>();
 const CACHE_TTL_MS = 1000 * 60 * 30;
 const NEARBY_CACHE_TTL_MS = 1000 * 60 * 15;
+const GOLFCOURSE_CACHE_TTL_MS = 1000 * 60 * 60;
+
+interface ServerGolfCourseTeeHole {
+  holeNumber: number;
+  par: number;
+  yardage: number;
+  handicap: number;
+}
+
+interface ServerGolfCourseTeeSet {
+  id: string;
+  gender: 'male' | 'female';
+  teeName: string;
+  color?: string;
+  courseRating?: number;
+  slopeRating?: number;
+  bogeyRating?: number;
+  totalYards?: number;
+  totalMeters?: number;
+  numberOfHoles?: number;
+  parTotal?: number;
+  frontCourseRating?: number;
+  frontSlopeRating?: number;
+  backCourseRating?: number;
+  backSlopeRating?: number;
+  holes: ServerGolfCourseTeeHole[];
+}
+
+interface ServerGolfCourseDetail {
+  id: string;
+  clubName: string;
+  courseName: string;
+  displayName: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  location?: { lat: number; lng: number };
+  tees: ServerGolfCourseTeeSet[];
+}
+
+function getGolfCourseApiKey(): string {
+  return (process.env.GOLFCOURSE_API_KEY || process.env.GOLF_COURSE_API_KEY || '').trim();
+}
+
+function normalizeGolfCourseRecord(raw: Record<string, unknown>): ServerGolfCourseDetail | null {
+  const idVal = raw.id;
+  if (idVal === undefined || idVal === null) return null;
+  const id = String(idVal);
+  const clubName = String(raw.club_name ?? raw.clubName ?? '').trim();
+  const courseName = String(raw.course_name ?? raw.courseName ?? '').trim();
+  const displayName =
+    clubName && courseName && !courseName.toLowerCase().includes(clubName.toLowerCase())
+      ? `${clubName} — ${courseName}`
+      : courseName || clubName || 'Golf Course';
+
+  const locRaw = (raw.location ?? {}) as Record<string, unknown>;
+  const lat = locRaw.latitude !== undefined ? Number(locRaw.latitude) : NaN;
+  const lng = locRaw.longitude !== undefined ? Number(locRaw.longitude) : NaN;
+  const location =
+    !Number.isNaN(lat) && !Number.isNaN(lng) && (Math.abs(lat) > 0.01 || Math.abs(lng) > 0.01)
+      ? { lat, lng }
+      : undefined;
+
+  const tees: ServerGolfCourseTeeSet[] = [];
+  const teesRaw = (raw.tees ?? {}) as Record<string, unknown>;
+
+  for (const gender of ['male', 'female'] as const) {
+    const list = Array.isArray(teesRaw[gender]) ? (teesRaw[gender] as Array<Record<string, unknown>>) : [];
+    list.forEach((t, idx) => {
+      const teeName = String(t.tee_name ?? t.teeName ?? `Tee ${idx + 1}`).trim();
+      const rawHoles = Array.isArray(t.holes) ? (t.holes as Array<Record<string, unknown>>) : [];
+      const holes: ServerGolfCourseTeeHole[] = rawHoles
+        .map((h, hIdx) => {
+          const holeNumber = Number(h.hole_number ?? h.holeNumber ?? hIdx + 1);
+          const par = Number(h.par ?? 4);
+          const yardage = Number(
+            h.yardage ?? h.yards ?? (h.meters !== undefined ? Math.round(Number(h.meters) * 1.09361) : 0)
+          );
+          const handicap = Number(h.handicap ?? h.stroke_index ?? holeNumber);
+          return {
+            holeNumber: Number.isFinite(holeNumber) ? holeNumber : hIdx + 1,
+            par: par >= 3 && par <= 6 ? par : 4,
+            yardage: Number.isFinite(yardage) && yardage > 0 ? Math.round(yardage) : 0,
+            handicap: handicap >= 1 && handicap <= 18 ? handicap : hIdx + 1,
+          };
+        })
+        .filter((h) => h.holeNumber >= 1 && h.holeNumber <= 18)
+        .sort((a, b) => a.holeNumber - b.holeNumber);
+
+      const safeSlug = teeName.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      tees.push({
+        id: `${gender}_${safeSlug}_${idx}`,
+        gender,
+        teeName,
+        color: typeof t.color === 'string' ? t.color : undefined,
+        courseRating: t.course_rating !== undefined ? Number(t.course_rating) : undefined,
+        slopeRating: t.slope_rating !== undefined ? Number(t.slope_rating) : undefined,
+        bogeyRating: t.bogey_rating !== undefined ? Number(t.bogey_rating) : undefined,
+        totalYards: t.total_yards !== undefined
+          ? Number(t.total_yards)
+          : t.yardage_total !== undefined
+            ? Number(t.yardage_total)
+            : undefined,
+        totalMeters: t.total_meters !== undefined ? Number(t.total_meters) : undefined,
+        numberOfHoles: t.number_of_holes !== undefined ? Number(t.number_of_holes) : holes.length || undefined,
+        parTotal: t.par_total !== undefined ? Number(t.par_total) : undefined,
+        frontCourseRating:
+          t.front_course_rating !== undefined ? Number(t.front_course_rating) : undefined,
+        frontSlopeRating:
+          t.front_slope_rating !== undefined ? Number(t.front_slope_rating) : undefined,
+        backCourseRating:
+          t.back_course_rating !== undefined ? Number(t.back_course_rating) : undefined,
+        backSlopeRating:
+          t.back_slope_rating !== undefined ? Number(t.back_slope_rating) : undefined,
+        holes,
+      });
+    });
+  }
+
+  return {
+    id,
+    clubName: clubName || displayName,
+    courseName: courseName || clubName || displayName,
+    displayName,
+    address: typeof locRaw.address === 'string' ? locRaw.address : undefined,
+    city: typeof locRaw.city === 'string' ? locRaw.city : undefined,
+    state: typeof locRaw.state === 'string' ? locRaw.state : undefined,
+    country: typeof locRaw.country === 'string' ? locRaw.country : undefined,
+    location,
+    tees,
+  };
+}
 
 async function fetchWithTimeout(
   url: string,
@@ -275,7 +411,177 @@ out geom;
     lng: number;
     source: string;
     score: number;
+    golfCourseApiId?: string;
+    clubName?: string;
+    courseName?: string;
   }
+
+  async function searchGolfCourseApi(query: string): Promise<ServerGolfCourseDetail[]> {
+    const apiKey = getGolfCourseApiKey();
+    const trimmed = query.trim();
+    if (!apiKey || !trimmed) return [];
+
+    const cacheKey = trimmed.toLowerCase();
+    const cached = golfCourseSearchCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < GOLFCOURSE_CACHE_TTL_MS) {
+      return cached.courses;
+    }
+
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.golfcourseapi.com/v1/search?search_query=${encodeURIComponent(trimmed)}`,
+        {
+          headers: {
+            Authorization: `Key ${apiKey}`,
+            Accept: 'application/json',
+          },
+        },
+        7500
+      );
+      if (!res.ok) return [];
+      const data = (await res.json()) as { courses?: Array<Record<string, unknown>> };
+      const courses = (data.courses ?? [])
+        .map(normalizeGolfCourseRecord)
+        .filter((c): c is ServerGolfCourseDetail => Boolean(c));
+      if (courses.length > 0) {
+        golfCourseSearchCache.set(cacheKey, { timestamp: Date.now(), courses });
+        for (const c of courses) {
+          if (c.tees.some((t) => t.holes.length > 0)) {
+            golfCourseDetailCache.set(c.id, { timestamp: Date.now(), course: c });
+          }
+        }
+      }
+      return courses;
+    } catch {
+      return [];
+    }
+  }
+
+  async function fetchGolfCourseApiDetail(id: string): Promise<ServerGolfCourseDetail | null> {
+    const apiKey = getGolfCourseApiKey();
+    if (!apiKey || !id) return null;
+
+    const cached = golfCourseDetailCache.get(id);
+    if (cached && Date.now() - cached.timestamp < GOLFCOURSE_CACHE_TTL_MS) {
+      return cached.course;
+    }
+
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.golfcourseapi.com/v1/courses/${encodeURIComponent(id)}`,
+        {
+          headers: {
+            Authorization: `Key ${apiKey}`,
+            Accept: 'application/json',
+          },
+        },
+        7500
+      );
+      if (!res.ok) return null;
+      const raw = (await res.json()) as Record<string, unknown>;
+      const record = (raw.course && typeof raw.course === 'object'
+        ? raw.course
+        : raw) as Record<string, unknown>;
+      const normalized = normalizeGolfCourseRecord(record);
+      if (normalized) {
+        golfCourseDetailCache.set(id, { timestamp: Date.now(), course: normalized });
+      }
+      return normalized;
+    } catch {
+      return null;
+    }
+  }
+
+  app.get('/api/golfcourse/status', (_req, res) => {
+    res.json({ configured: Boolean(getGolfCourseApiKey()) });
+  });
+
+  app.get('/api/golfcourse/search', async (req, res) => {
+    const q = String(req.query.q ?? '').trim();
+    const configured = Boolean(getGolfCourseApiKey());
+    if (!configured || !q) {
+      res.json({ configured, courses: [] });
+      return;
+    }
+    const courses = await searchGolfCourseApi(q);
+    res.json({ configured, courses });
+  });
+
+  app.get('/api/golfcourse/course/:id', async (req, res) => {
+    const configured = Boolean(getGolfCourseApiKey());
+    if (!configured) {
+      res.status(503).json({ error: 'GolfCourseAPI key not configured on server' });
+      return;
+    }
+    const course = await fetchGolfCourseApiDetail(req.params.id);
+    if (!course) {
+      res.status(404).json({ error: 'Course not found in GolfCourseAPI' });
+      return;
+    }
+    res.json({ course });
+  });
+
+  app.post('/api/golfcourse/match', async (req, res) => {
+    const configured = Boolean(getGolfCourseApiKey());
+    if (!configured) {
+      res.json({ configured: false, matches: [] });
+      return;
+    }
+
+    const name = String(req.body?.name ?? '').trim();
+    const subCourseName = String(req.body?.subCourseName ?? '').trim();
+    const golfCourseApiId = req.body?.golfCourseApiId ? String(req.body.golfCourseApiId) : '';
+    const lat = req.body?.lat !== undefined ? Number(req.body.lat) : NaN;
+    const lng = req.body?.lng !== undefined ? Number(req.body.lng) : NaN;
+
+    const matchedList: ServerGolfCourseDetail[] = [];
+
+    if (golfCourseApiId) {
+      const direct = await fetchGolfCourseApiDetail(golfCourseApiId);
+      if (direct) matchedList.push(direct);
+    }
+
+    const baseName = name
+      .split('—')[0]
+      .replace(/\b(golf\s*(course|club|links)|country\s*club|resort)\b/gi, '')
+      .trim();
+    const queryTerm = baseName.length >= 3 ? baseName : name.split('—')[0].trim();
+
+    if (queryTerm) {
+      const searchHits = await searchGolfCourseApi(queryTerm);
+      const targetNorm = normalizeCourseName(name.split('—')[0]);
+
+      const relevant = searchHits.filter((c) => {
+        if (matchedList.some((m) => m.id === c.id)) return false;
+        if (c.location && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+          const dist = haversineMeters(lat, lng, c.location.lat, c.location.lng);
+          if (dist <= 8000) return true;
+        }
+        const clubNorm = normalizeCourseName(c.clubName);
+        return Boolean(targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm)));
+      });
+
+      const hydrated = await Promise.all(
+        relevant.slice(0, 4).map(async (c) => {
+          if (c.tees.some((t) => t.holes.length > 0)) return c;
+          return (await fetchGolfCourseApiDetail(c.id)) ?? c;
+        })
+      );
+      matchedList.push(...hydrated);
+    }
+
+    // If a specific subCourseName was requested, rank matching course first
+    if (subCourseName && matchedList.length > 1) {
+      const subLower = subCourseName.toLowerCase();
+      matchedList.sort((a, b) => {
+        const aMatch = a.courseName.toLowerCase().includes(subLower) ? 1 : 0;
+        const bMatch = b.courseName.toLowerCase().includes(subLower) ? 1 : 0;
+        return bMatch - aMatch;
+      });
+    }
+
+    res.json({ configured: true, matches: matchedList });
+  });
 
   function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
     const toRad = (d: number) => (d * Math.PI) / 180;
@@ -293,6 +599,12 @@ out geom;
       .replace(/^the\s+/, '')
       .replace(/\b(golf|course|club|links|country|resort)\b/g, '')
       .replace(/[^a-z0-9]/g, '');
+  }
+
+  function isDiscGolfCourse(...parts: Array<string | undefined>): boolean {
+    const text = parts.filter(Boolean).join(' ').toLowerCase();
+    if (!text) return false;
+    return /\b(disc\s*-?\s*golf|disk\s*-?\s*golf|disgolf|frisbee|frolf|disc\s*park)\b/i.test(text);
   }
 
   function deduplicateCourses(items: UnifiedCourseCandidate[]): UnifiedCourseCandidate[] {
@@ -365,6 +677,9 @@ out geom;
         if (!c.location) continue;
         const name = (c.attributes?.PlaceName || c.address || '').trim();
         if (!name) continue;
+        if (isDiscGolfCourse(name, c.address, c.attributes?.Place_addr, c.attributes?.Type)) {
+          continue;
+        }
         const addr =
           c.attributes?.Place_addr ||
           [c.attributes?.City, c.attributes?.Region].filter(Boolean).join(', ') ||
@@ -461,6 +776,9 @@ out center 30;
           const p = f.properties;
           const coords = f.geometry?.coordinates;
           if (!p || !coords || !p.name) continue;
+          if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) {
+            continue;
+          }
           const isGolf =
             p.osm_value === 'golf_course' ||
             p.name.toLowerCase().includes('golf') ||
@@ -486,6 +804,13 @@ out center 30;
           if (elLat === undefined || elLng === undefined) continue;
           const name = el.tags?.name?.trim();
           if (!name) continue;
+          if (
+            el.tags?.sport === 'disc_golf' ||
+            el.tags?.leisure === 'disc_golf_course' ||
+            isDiscGolfCourse(name, el.tags?.description, el.tags?.sport)
+          ) {
+            continue;
+          }
           const addr = [
             el.tags?.['addr:city'] || el.tags?.['addr:town'] || el.tags?.['addr:village'],
             el.tags?.['addr:state'],
@@ -504,7 +829,9 @@ out center 30;
         }
       }
 
-      const deduped = deduplicateCourses(combined)
+      const deduped = deduplicateCourses(
+        combined.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress))
+      )
         .map((c) => {
           const meters = haversineMeters(lat, lng, c.lat, c.lng);
           const miles = (meters / 1609.344).toFixed(1);
@@ -560,7 +887,7 @@ out center 30;
       photonParams.set('lon', near.lng.toFixed(4));
     }
 
-    const [arcRes, nomRes, photonRes] = await Promise.allSettled([
+    const [arcRes, nomRes, photonRes, gcaRes] = await Promise.allSettled([
       queryArcGisGolfCourses(q, near, 12),
       fetchWithTimeout(
         `https://nominatim.openstreetmap.org/search?${nomParams.toString()}`,
@@ -572,9 +899,30 @@ out center 30;
         { headers: { 'User-Agent': OSM_USER_AGENT, Accept: 'application/json' } },
         8000
       ).then(async (r) => (r.ok ? r.json() : { features: [] })),
+      searchGolfCourseApi(q),
     ]);
 
     const combined: UnifiedCourseCandidate[] = [];
+
+    if (gcaRes.status === 'fulfilled') {
+      for (const c of gcaRes.value) {
+        if (!c.location) continue;
+        if (isDiscGolfCourse(c.displayName, c.clubName, c.courseName)) continue;
+        const addr = [c.address, c.city, c.state, c.country].filter(Boolean).join(', ');
+        combined.push({
+          placeId: `gca_${c.id}`,
+          name: c.displayName,
+          formattedAddress: addr || undefined,
+          lat: c.location.lat,
+          lng: c.location.lng,
+          source: 'GolfCourseAPI',
+          score: 94,
+          golfCourseApiId: c.id,
+          clubName: c.clubName,
+          courseName: c.courseName,
+        });
+      }
+    }
 
     if (arcRes.status === 'fulfilled') {
       combined.push(...arcRes.value);
@@ -592,6 +940,12 @@ out center 30;
         class?: string;
         type?: string;
       }>) {
+        if (
+          item.type === 'disc_golf_course' ||
+          isDiscGolfCourse(item.name, item.display_name, item.type)
+        ) {
+          continue;
+        }
         const isGolf =
           item.type === 'golf_course' ||
           item.class === 'leisure' ||
@@ -636,6 +990,9 @@ out center 30;
         const p = f.properties;
         const coords = f.geometry?.coordinates;
         if (!p || !coords || !p.name) continue;
+        if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) {
+          continue;
+        }
         const isGolf =
           p.osm_value === 'golf_course' ||
           p.name.toLowerCase().includes('golf') ||
@@ -654,7 +1011,9 @@ out center 30;
       }
     }
 
-    const deduped = deduplicateCourses(combined);
+    const deduped = deduplicateCourses(
+      combined.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress))
+    );
 
     if (near) {
       const sorted = deduped

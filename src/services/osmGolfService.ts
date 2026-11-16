@@ -51,6 +51,15 @@ interface UnifiedCourseResponseItem {
   source: string;
   score?: number;
   distMeters?: number;
+  golfCourseApiId?: string;
+  clubName?: string;
+  courseName?: string;
+}
+
+function isDiscGolfCourse(...parts: Array<string | undefined>): boolean {
+  const text = parts.filter(Boolean).join(' ').toLowerCase();
+  if (!text) return false;
+  return /\b(disc\s*-?\s*golf|disk\s*-?\s*golf|disgolf|frisbee|frolf|disc\s*park)\b/i.test(text);
 }
 
 function mapCandidateToCourseInfo(item: UnifiedCourseResponseItem): CourseInfo {
@@ -64,6 +73,9 @@ function mapCandidateToCourseInfo(item: UnifiedCourseResponseItem): CourseInfo {
     formattedAddress: item.formattedAddress,
     location: { lat: item.lat, lng: item.lng },
     attributions,
+    golfCourseApiId: item.golfCourseApiId,
+    clubName: item.clubName,
+    courseName: item.courseName,
   };
 }
 
@@ -143,6 +155,7 @@ async function queryDirectCourseDirectories(
       if (!c.location) continue;
       const name = (c.attributes?.PlaceName || c.address || '').trim();
       if (!name) continue;
+      if (isDiscGolfCourse(name, c.address, c.attributes?.Place_addr)) continue;
       const addr =
         c.attributes?.Place_addr ||
         [c.attributes?.City, c.attributes?.Region].filter(Boolean).join(', ') ||
@@ -164,6 +177,7 @@ async function queryDirectCourseDirectories(
       const p = f.properties;
       const coords = f.geometry?.coordinates;
       if (!p || !coords || !p.name) continue;
+      if (p.osm_value === 'disc_golf_course' || isDiscGolfCourse(p.name, p.osm_value)) continue;
       const isGolf =
         p.osm_value === 'golf_course' ||
         p.name.toLowerCase().includes('golf') ||
@@ -234,7 +248,9 @@ export async function findNearbyCoursesOsm(
       10000
     );
     if (data.courses && data.courses.length > 0) {
-      return data.courses.map(mapCandidateToCourseInfo);
+      return data.courses
+        .filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress))
+        .map(mapCandidateToCourseInfo);
     }
   } catch (err) {
     console.warn('Backend /api/osm/nearby unavailable, using direct directory fallback:', err);
@@ -270,7 +286,9 @@ export async function searchCoursesOsm(
       10000
     );
     if (data.courses && data.courses.length > 0) {
-      return data.courses.map(mapCandidateToCourseInfo);
+      return data.courses
+        .filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress))
+        .map(mapCandidateToCourseInfo);
     }
   } catch (err) {
     console.warn('Backend /api/osm/search unavailable, using direct directory fallback:', err);
