@@ -1,4 +1,5 @@
 import React from 'react';
+import { Check, Save } from 'lucide-react';
 import { DistanceUnit, HolePinData, HoleScoreState, RoundState } from '../types/golf';
 import {
   formatDistanceValue,
@@ -14,9 +15,11 @@ import {
 
 interface ScorecardViewProps {
   round: RoundState;
+  roundJustSaved: boolean;
   onSelectHole: (holeNumber: number) => void;
   onUpdateHoleMeta: (holeNumber: number, patch: Partial<HolePinData>) => void;
   onOverrideHoleScore: (holeNumber: number, score: number | undefined) => void;
+  onSaveRound: () => void;
   onResetRound: () => void;
 }
 
@@ -251,9 +254,11 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
 
 export const ScorecardView: React.FC<ScorecardViewProps> = ({
   round,
+  roundJustSaved,
   onSelectHole,
   onUpdateHoleMeta,
   onOverrideHoleScore,
+  onSaveRound,
   onResetRound,
 }) => {
   const allHoles = Array.from({ length: 18 }, (_, i) => i + 1);
@@ -284,13 +289,28 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={onResetRound}
-          className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 self-start sm:self-auto whitespace-nowrap"
-        >
-          Start Fresh Round
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={onSaveRound}
+            className={`min-h-[44px] px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-2 whitespace-nowrap transition-colors ${
+              roundJustSaved
+                ? 'bg-emerald-50 border border-emerald-300 text-emerald-900'
+                : 'bg-emerald-700 hover:bg-emerald-800 text-white'
+            }`}
+          >
+            {roundJustSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            <span>{roundJustSaved ? 'Round Saved' : 'Save Round'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onResetRound}
+            className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+          >
+            End Round
+          </button>
+        </div>
       </div>
 
       {/* 4-column KPI strip */}

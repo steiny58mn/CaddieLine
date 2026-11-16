@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, ClipboardList, Map as MapIcon, Nfc, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BarChart3, ClipboardList, Map as MapIcon, Nfc } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -17,6 +17,7 @@ import {
   CLUB_PRESETS,
   ClubPreset,
   DEFAULT_CLUB_BAG,
+  computeDistanceMeters,
   computeDistanceYards,
   createInitialRoundState,
   getHoleStrokes,
@@ -36,7 +37,7 @@ import { ShotLoggerPanel } from './components/ShotLoggerPanel';
 import { ScorecardView } from './components/ScorecardView';
 import { StatsView } from './components/StatsView';
 import { BagNfcView } from './components/BagNfcView';
-import { CourseSearchModal } from './components/CourseSearchModal';
+import { CourseLandingView } from './components/CourseLandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 
 const STORAGE_KEYS = {
@@ -59,7 +60,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppViewTab>('stats');
   const [statsSubTab, setStatsSubTab] = useState<'entry' | 'analytics'>('entry');
-  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+  const [roundJustSaved, setRoundJustSaved] = useState(false);
 
   const [round, setRound] = useState<RoundState>(() =>
     loadFromStorage(STORAGE_KEYS.ROUND, createInitialRoundState())
@@ -71,7 +72,7 @@ export default function App() {
     loadFromStorage(STORAGE_KEYS.BAG, DEFAULT_CLUB_BAG)
   );
   const [autoLogOnNfc, setAutoLogOnNfc] = useState<boolean>(() =>
-    loadFromStorage(STORAGE_KEYS.AUTO_NFC, false)
+    loadFromStorage(STORAGE_KEYS.AUTO_NFC, true)
   );
 
   // OpenStreetMap course geometry state (greens, bunkers, water hazards, holes)
@@ -96,7 +97,24 @@ export default function App() {
   const [pairingTarget, setPairingTarget] = useState<ClubPreset | null>(null);
   const [lastNfcFeedback, setLastNfcFeedback] = useState<string | null>(null);
 
+  const autoStartedCourseRef = useRef<string | null>(null);
   const geo = useGeolocation();
+
+  // Keep selectedClubId aligned with saved bag clubs when bag changes
+  useEffect(() => {
+    if (bag.length === 0) return;
+    if (!bag.some((c) => c.id === selectedClubId)) {
+      const preferred = bag.find((c) => c.id === 'dr') ?? bag[0];
+      setSelectedClubId(preferred.id);
+    }
+  }, [bag, selectedClubId]);
+
+  // Clear saved confirmation badge after a brief moment
+  useEffect(() => {
+    if (!roundJustSaved) return;
+    const timer = window.setTimeout(() => setRoundJustSaved(false), 2500);
+    return () => window.clearTimeout(timer);
+  }, [roundJustSaved]);
 
   // Ensure geometry is loaded if resuming a saved round with a course
   useEffect(() => {
@@ -134,7 +152,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [round.course?.placeId]);
+  }, [round.course?.placeId, courseGeometry?.courseId]);
 
   useEffect(() => {
     try {
@@ -182,10 +200,14 @@ export default function App() {
     };
   }, [round]);
 
-  // Auto-calculate shot distance from previous lie/tee to current GPS or target pin
+  // Auto-calculate shot distance from active open NFC shot, previous lie, or tee to current GPS or target pin
   const currentOriginLatLng: LatLngLiteral | null = useMemo(() => {
     if (pendingStartLatLng) return pendingStartLatLng;
     const shots = currentHoleScore.shots;
+    const lastShot = shots[shots.length - 1];
+    if (lastShot && !lastShot.endLatLng) {
+      return lastShot.startLatLng ?? currentHoleData.teeLatLng ?? null;
+    }
     const lastWithEnd = [...shots].reverse().find((s) => s.endLatLng);
     if (lastWithEnd?.endLatLng) return lastWithEnd.endLatLng;
     if (shots.length === 0 && currentHoleData.teeLatLng) return currentHoleData.teeLatLng;
@@ -286,6 +308,57 @@ export default function App() {
       parsedDist !== null && !Number.isNaN(parsedDist) && parsedDist > 0 ? parsedDist : null;
 
     const endPos = geo.position ?? targetPin ?? undefined;
+    const lastShot = currentHoleScore.shots[currentHoleScore.shots.length - 1];
+
+    // If an NFC-started shot is currently open, finish & record its outcome instead of duplicating
+    if (lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng) {
+      const pool = bag.length > 0 ? bag : CLUB_PRESETS;
+      const club = pool.find((c) => c.id === selectedClubId) ?? pool[0];
+      const lieMeta = getLieMeta(selectedLie);
+      const startPos = lastShot.startLatLng ?? currentHoleData.teeLatLng;
+      const computedEndDist =
+        validDist ?? (startPos && endPos ? computeDistanceYards(startPos, endPos) : null);
+
+      setRound((prev) => {
+        const holeNum = prev.currentHole;
+        const holeScore = prev.scores[holeNum];
+        const updatedShots = holeScore.shots.map((s, idx) =>
+          idx === holeScore.shots.length - 1
+            ? {
+                ...s,
+                clubId: club.id,
+                clubName: club.name,
+                clubShortName: club.shortName,
+                lie: selectedLie,
+                direction: selectedDirection,
+                penaltyStrokes: lieMeta.penalty,
+                distanceYards: computedEndDist,
+                endLatLng: endPos,
+              }
+            : s
+        );
+
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          scores: {
+            ...prev.scores,
+            [holeNum]: {
+              ...holeScore,
+              shots: updatedShots,
+            },
+          },
+        };
+      });
+
+      if (endPos) {
+        setPendingStartLatLng(endPos);
+      }
+      setManualDistanceYards('');
+      setTargetPin(null);
+      return;
+    }
+
     const startPos =
       currentOriginLatLng ??
       (currentHoleScore.shots.length === 0 ? currentHoleData.teeLatLng : undefined);
@@ -310,8 +383,9 @@ export default function App() {
     geo.position,
     targetPin,
     currentOriginLatLng,
-    currentHoleScore.shots.length,
+    currentHoleScore.shots,
     currentHoleData.teeLatLng,
+    bag,
     commitShot,
     selectedClubId,
     selectedLie,
@@ -320,6 +394,34 @@ export default function App() {
 
   const handleQuickLogFromMap = useCallback(
     (endLatLng: LatLngLiteral, startLatLng: LatLngLiteral | null, yards: number | null) => {
+      const lastShot = currentHoleScore.shots[currentHoleScore.shots.length - 1];
+      if (lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng) {
+        const origin = lastShot.startLatLng ?? startLatLng ?? currentHoleData.teeLatLng;
+        const computedYards = origin ? computeDistanceYards(origin, endLatLng) : yards;
+        setRound((prev) => {
+          const holeNum = prev.currentHole;
+          const holeScore = prev.scores[holeNum];
+          const updatedShots = holeScore.shots.map((s, idx) =>
+            idx === holeScore.shots.length - 1
+              ? { ...s, endLatLng, distanceYards: computedYards }
+              : s
+          );
+          return {
+            ...prev,
+            updatedAt: Date.now(),
+            scores: {
+              ...prev.scores,
+              [holeNum]: {
+                ...holeScore,
+                shots: updatedShots,
+              },
+            },
+          };
+        });
+        setPendingStartLatLng(endLatLng);
+        return;
+      }
+
       commitShot({
         clubId: selectedClubId,
         lie: selectedLie,
@@ -331,7 +433,14 @@ export default function App() {
       });
       setPendingStartLatLng(endLatLng);
     },
-    [commitShot, selectedClubId, selectedLie, selectedDirection]
+    [
+      currentHoleScore.shots,
+      currentHoleData.teeLatLng,
+      commitShot,
+      selectedClubId,
+      selectedLie,
+      selectedDirection,
+    ]
   );
 
   // GolfPad Web NFC Tag Handler
@@ -358,7 +467,9 @@ export default function App() {
             },
           ];
         });
-        setSelectedClubId((prevId) => (bag.some((c) => c.id === prevId) ? prevId : pairingTarget.id));
+        setSelectedClubId((prevId) =>
+          bag.some((c) => c.id === prevId) ? prevId : pairingTarget.id
+        );
         setLastNfcFeedback(
           `Paired NFC tag ${upperTagId} to ${pairingTarget.name} (${pairingTarget.shortName}).`
         );
@@ -378,70 +489,117 @@ export default function App() {
         return;
       }
 
-      const gpsFix = (await geo.requestSingleFix()) ?? geo.position;
+      // Immediately reflect scanned club in the Club Selected dropdown
       setSelectedClubId(matchedClub.id);
 
-      // Update distance of previous shot if we now have the player's next ball GPS fix
-      let measuredPrevDist: number | null = null;
-      if (gpsFix) {
-        setRound((prev) => {
-          const holeNum = prev.currentHole;
-          const holeScore = prev.scores[holeNum];
-          if (holeScore.shots.length === 0) return prev;
-          const lastShot = holeScore.shots[holeScore.shots.length - 1];
-          const origin = lastShot.startLatLng ?? prev.holes[holeNum].teeLatLng;
-          if (!origin) return prev;
+      const gpsFix = (await geo.requestSingleFix()) ?? geo.position;
 
-          measuredPrevDist = computeDistanceYards(origin, gpsFix);
-          const updatedShots = holeScore.shots.map((s, idx) =>
-            idx === holeScore.shots.length - 1
-              ? { ...s, endLatLng: gpsFix, distanceYards: measuredPrevDist }
-              : s
-          );
-          return {
-            ...prev,
-            updatedAt: Date.now(),
-            scores: {
-              ...prev.scores,
-              [holeNum]: {
-                ...holeScore,
-                shots: updatedShots,
-              },
-            },
-          };
-        });
-      }
+      let closedShotClub: string | null = null;
+      let closedShotYards: number | null = null;
 
-      if (autoLogOnNfc) {
-        const defaultLie: ShotLie = matchedClub.category === 'putter' ? 'green' : 'fairway';
-        commitShot({
+      setRound((prev) => {
+        const holeNum = prev.currentHole;
+        const holeScore = prev.scores[holeNum];
+        const teeLatLng = prev.holes[holeNum]?.teeLatLng;
+        let updatedShots = [...holeScore.shots];
+
+        // End the active/previous shot at the GPS location of this newly scanned tag
+        if (updatedShots.length > 0) {
+          const prevShot = updatedShots[updatedShots.length - 1];
+          if (!prevShot.endLatLng) {
+            const origin = prevShot.startLatLng ?? teeLatLng;
+            const measured = origin && gpsFix ? computeDistanceYards(origin, gpsFix) : null;
+            closedShotClub = prevShot.clubShortName;
+            closedShotYards = measured;
+            updatedShots = updatedShots.map((s, idx) =>
+              idx === updatedShots.length - 1
+                ? {
+                    ...s,
+                    endLatLng: gpsFix ?? undefined,
+                    distanceYards: measured,
+                  }
+                : s
+            );
+          }
+        }
+
+        // Start tracking the newly scanned club shot from this GPS location
+        const isPutter = matchedClub.category === 'putter' || matchedClub.id === 'pt';
+        const defaultLie: ShotLie = isPutter ? 'green' : 'fairway';
+        const newShotStart = gpsFix ?? (updatedShots.length === 0 ? teeLatLng : undefined);
+
+        const nextShot: ShotRecord = {
+          id: `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          holeNumber: holeNum,
+          strokeNumber: updatedShots.length + 1,
           clubId: matchedClub.id,
+          clubName: matchedClub.name,
+          clubShortName: matchedClub.shortName,
           lie: defaultLie,
           direction: 'straight',
+          penaltyStrokes: 0,
           distanceYards: null,
-          startLatLng: gpsFix ?? undefined,
+          startLatLng: newShotStart,
+          endLatLng: undefined,
+          timestamp: Date.now(),
           source: 'nfc',
-        });
-        setLastNfcFeedback(
-          `NFC ${matchedClub.name} logged (${payload.source})${
-            measuredPrevDist ? ` · Prev shot ${measuredPrevDist} yds` : ''
-          }`
-        );
-      } else {
-        if (gpsFix) {
-          setPendingStartLatLng(gpsFix);
-        }
-        setLastNfcFeedback(
-          `NFC selected ${matchedClub.name}${
-            measuredPrevDist ? ` · Measured prev shot: ${measuredPrevDist} yds` : ' · Ready to log lie'
-          }`
-        );
-      }
+        };
+
+        const nextPutts = isPutter
+          ? Math.max(
+              holeScore.manualPutts,
+              updatedShots.filter((s) => s.clubId === 'pt').length + 1
+            )
+          : holeScore.manualPutts;
+
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          scores: {
+            ...prev.scores,
+            [holeNum]: {
+              ...holeScore,
+              shots: [...updatedShots, nextShot],
+              manualPutts: nextPutts,
+            },
+          },
+        };
+      });
+
+      setPendingStartLatLng(gpsFix ?? null);
+      setManualDistanceYards('');
+
+      const closedSummary =
+        closedShotClub !== null
+          ? closedShotYards !== null
+            ? `Ended ${closedShotClub} (${closedShotYards} yds) · `
+            : `Ended ${closedShotClub} · `
+          : '';
+
+      setLastNfcFeedback(
+        `${closedSummary}Started ${matchedClub.name}${
+          gpsFix ? ' · Tracking live GPS distance' : ' · Waiting for GPS fix'
+        }`
+      );
     },
-    [pairingTarget, bag, geo, autoLogOnNfc, commitShot]
+    [pairingTarget, bag, geo]
   );
 
   const nfc = useWebNfc(handleNfcTagDetected);
+
+  // Automatically enable Web NFC when actively on a course
+  useEffect(() => {
+    const courseId = round.course?.placeId ?? null;
+    if (!courseId) {
+      autoStartedCourseRef.current = null;
+      return;
+    }
+    if (autoStartedCourseRef.current === courseId) return;
+    autoStartedCourseRef.current = courseId;
+    if (nfc.isSupported && nfc.status !== 'scanning') {
+      void nfc.startScan();
+    }
+  }, [round.course?.placeId, nfc]);
 
   const handleStartPairClub = useCallback(
     (club: ClubPreset) => {
@@ -466,11 +624,13 @@ export default function App() {
       setPendingStartLatLng(null);
       setTargetPin(null);
       setManualDistanceYards('');
-      setSelectedClubId('dr');
+      const defaultClub =
+        bag.length > 0 ? bag.find((c) => c.id === 'dr')?.id ?? bag[0].id : 'dr';
+      setSelectedClubId(defaultClub);
       setSelectedLie('fairway');
       setSelectedDirection('straight');
     },
-    [geo]
+    [geo, bag]
   );
 
   const handleUpdateHoleMeta = useCallback((holeNumber: number, patch: Partial<HolePinData>) => {
@@ -559,21 +719,46 @@ export default function App() {
     }));
   }, []);
 
-  const handleSelectCourse = useCallback((course: CourseInfo, geometry: OsmCourseGeometry) => {
-    setCourseGeometry(geometry);
-    setGeometryError(null);
-    const populatedHoles = applyOsmGeometryToHoles(geometry);
+  const handleSelectCourse = useCallback(
+    (course: CourseInfo, geometry: OsmCourseGeometry) => {
+      setCourseGeometry(geometry);
+      setGeometryError(null);
+      const populatedHoles = applyOsmGeometryToHoles(geometry);
 
-    setRound((prev) => ({
-      ...prev,
-      course,
-      currentHole: 1,
-      holes: populatedHoles,
-      updatedAt: Date.now(),
-    }));
-    setPendingStartLatLng(null);
-    setTargetPin(null);
-  }, []);
+      // Determine starting hole: detect nearest tee if player is on the course (< 5km), else default to Hole #1
+      let startingHole = 1;
+      if (geo.position && computeDistanceMeters(geo.position, course.location) <= 5000) {
+        let closestDist = 350;
+        for (let num = 1; num <= 18; num += 1) {
+          const tee = populatedHoles[num]?.teeLatLng;
+          if (!tee) continue;
+          const dist = computeDistanceMeters(geo.position, tee);
+          if (dist < closestDist) {
+            closestDist = dist;
+            startingHole = num;
+          }
+        }
+      }
+
+      const freshRound = createInitialRoundState(course);
+      freshRound.currentHole = startingHole;
+      freshRound.holes = populatedHoles;
+      setRound(freshRound);
+
+      setPendingStartLatLng(null);
+      setTargetPin(null);
+      setManualDistanceYards('');
+      setLastNfcFeedback(null);
+      setRoundJustSaved(false);
+      setStatsSubTab('entry');
+      setActiveTab('stats');
+
+      if (nfc.isSupported && nfc.status !== 'scanning') {
+        void nfc.startScan();
+      }
+    },
+    [geo.position, nfc]
+  );
 
   const handleRefreshOsmCourse = useCallback(async () => {
     if (!round.course) return;
@@ -613,19 +798,51 @@ export default function App() {
     }
   }, [round.course]);
 
+  const handleSaveRound = useCallback(() => {
+    const snapshot: RoundState = {
+      ...round,
+      updatedAt: Date.now(),
+    };
+    setRound(snapshot);
+    setSavedRounds((prev) => [snapshot, ...prev.filter((r) => r.id !== snapshot.id)].slice(0, 20));
+    setRoundJustSaved(true);
+  }, [round]);
+
   const handleResetRound = useCallback(() => {
     const hasData = Object.values(round.scores).some(
       (s) => s.shots.length > 0 || s.manualPutts > 0 || s.manualScoreOverride !== undefined
     );
     if (hasData) {
-      setSavedRounds((prev) => [round, ...prev.filter((r) => r.id !== round.id)].slice(0, 20));
+      const snapshot = { ...round, updatedAt: Date.now() };
+      setSavedRounds((prev) => [snapshot, ...prev.filter((r) => r.id !== snapshot.id)].slice(0, 20));
     }
-    setRound(createInitialRoundState(round.course));
+    setRound(createInitialRoundState(null));
     setPendingStartLatLng(null);
     setTargetPin(null);
+    setManualDistanceYards('');
+    setLastNfcFeedback(null);
+    setRoundJustSaved(false);
     setStatsSubTab('entry');
     setActiveTab('stats');
-  }, [round]);
+    nfc.stopScan();
+  }, [round, nfc]);
+
+  // If the user switches to Map while far away from the course with no manual position and no shots yet, focus Hole #1
+  const handleSelectNavTab = useCallback(
+    (tab: AppViewTab) => {
+      if (
+        tab === 'map' &&
+        round.course &&
+        !geo.isManualOverride &&
+        (!geo.position || computeDistanceMeters(geo.position, round.course.location) > 5000) &&
+        roundTotals.playedCount === 0
+      ) {
+        setRound((prev) => (prev.currentHole === 1 ? prev : { ...prev, currentHole: 1 }));
+      }
+      setActiveTab(tab);
+    },
+    [round.course, geo.isManualOverride, geo.position, roundTotals.playedCount]
+  );
 
   const navItems: Array<{ id: AppViewTab; label: string; icon: React.ReactNode }> = [
     { id: 'stats', label: 'Stats', icon: <BarChart3 className="w-5 h-5" /> },
@@ -634,53 +851,82 @@ export default function App() {
     { id: 'bag', label: 'Bag & NFC', icon: <Nfc className="w-5 h-5" /> },
   ];
 
+  const isCourseChosen = Boolean(round.course);
+  const pairedClubsCount = bag.filter((c) => Boolean(c.nfcTagId)).length;
+
   return (
     <div className="h-full flex flex-col bg-[#F5F7F5]">
-      {/* Top Bar Contract: Zone 1 (Wordmark) — Zone 2 (4 Nav Links) — Zone 3 (1 Primary CTA) */}
-      <header className="h-[52px] md:h-14 px-4 sm:px-6 bg-white border-b border-slate-200 flex items-center justify-between gap-8 shrink-0 z-30">
+      {/* Top Bar */}
+      <header className="h-[52px] md:h-14 px-4 sm:px-6 bg-white border-b border-slate-200 flex items-center justify-between gap-6 shrink-0 z-30">
         <button
           type="button"
-          onClick={() => setActiveTab('stats')}
+          onClick={() => handleSelectNavTab('stats')}
           className="font-display text-lg font-bold tracking-tight text-[#0F1A14] whitespace-nowrap shrink-0 text-left"
         >
           CaddieLine
         </button>
 
-        <nav className="hidden md:flex items-center gap-6" aria-label="Primary navigation">
-          {navItems.map((item) => {
-            const active = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveTab(item.id)}
-                className={`text-sm font-medium whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
-                  active
-                    ? 'text-[#0F1A14] border-emerald-700 font-semibold'
-                    : 'text-slate-600 border-transparent hover:text-[#0F1A14] hover:border-slate-300'
-                }`}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
+        {isCourseChosen && (
+          <nav className="hidden md:flex items-center gap-6" aria-label="Primary navigation">
+            {navItems.map((item) => {
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSelectNavTab(item.id)}
+                  className={`text-sm font-medium whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
+                    active
+                      ? 'text-[#0F1A14] border-emerald-700 font-semibold'
+                      : 'text-slate-600 border-transparent hover:text-[#0F1A14] hover:border-slate-300'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsCourseModalOpen(true)}
-            className="h-9 px-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors max-w-[185px]"
-          >
-            <Search className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">{round.course ? round.course.name : 'Find Course'}</span>
-          </button>
+        <div className="flex items-center gap-3 shrink-0 min-w-0">
+          {isCourseChosen ? (
+            <span className="text-xs font-semibold text-emerald-800 truncate max-w-[180px] sm:max-w-[260px]">
+              {round.course?.name}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setActiveTab((prev) => (prev === 'bag' ? 'stats' : 'bag'))}
+              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-[#0F1A14] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+            >
+              <Nfc className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+              <span>{activeTab === 'bag' ? 'Choose Course' : 'Bag & NFC'}</span>
+            </button>
+          )}
         </div>
       </header>
 
       {/* Main Workspace */}
       <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
-        {activeTab === 'stats' && (
+        {!isCourseChosen && activeTab !== 'bag' && (
+          <CourseLandingView
+            userPosition={geo.position}
+            savedRounds={savedRounds}
+            pairedClubsCount={pairedClubsCount}
+            onSelectCourse={handleSelectCourse}
+            onLoadSavedRound={(loaded) => {
+              setRound(loaded);
+              setStatsSubTab('entry');
+              setActiveTab('stats');
+            }}
+            onDeleteSavedRound={(id) =>
+              setSavedRounds((prev) => prev.filter((item) => item.id !== id))
+            }
+            onOpenBagNfc={() => setActiveTab('bag')}
+          />
+        )}
+
+        {isCourseChosen && activeTab === 'stats' && (
           <div className="h-full flex flex-col lg:grid lg:grid-cols-[440px_1fr] pb-14 md:pb-0">
             {/* Mobile Sub-Switcher: Enter Hole Stats vs Round Analytics */}
             <div className="lg:hidden px-3 py-2 bg-white border-b border-slate-200 shrink-0">
@@ -730,8 +976,6 @@ export default function App() {
                 selectedDirection={selectedDirection}
                 manualDistanceYards={manualDistanceYards}
                 autoDetectedDistanceYards={autoDetectedDistanceYards}
-                nfcStatus={nfc.status}
-                nfcSupported={nfc.isSupported}
                 lastNfcFeedback={lastNfcFeedback}
                 onSelectHole={handleChangeHole}
                 onSelectClub={setSelectedClubId}
@@ -745,12 +989,7 @@ export default function App() {
                 onUpdateHoleMeta={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
                 onPrevHole={() => handleChangeHole(round.currentHole - 1)}
                 onNextHole={() => handleChangeHole(round.currentHole + 1)}
-                onToggleNfcScan={() => {
-                  if (nfc.status === 'scanning') nfc.stopScan();
-                  else void nfc.startScan();
-                }}
                 onOpenBagNfc={() => setActiveTab('bag')}
-                onFlipToMap={() => setActiveTab('map')}
               />
             </div>
 
@@ -763,6 +1002,9 @@ export default function App() {
               <StatsView
                 round={round}
                 savedRounds={savedRounds}
+                roundJustSaved={roundJustSaved}
+                onSaveRound={handleSaveRound}
+                onResetRound={handleResetRound}
                 onLoadRound={(loaded) => {
                   setRound(loaded);
                   setStatsSubTab('entry');
@@ -776,7 +1018,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'map' && (
+        {isCourseChosen && activeTab === 'map' && (
           <div className="h-full relative isolate z-0 pb-14 md:pb-0">
             <OpenGolfHoleMap
               course={round.course}
@@ -802,7 +1044,6 @@ export default function App() {
               onResumeLiveGps={geo.resumeLiveGps}
               onUpdateHolePins={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
               onQuickLogFromMap={handleQuickLogFromMap}
-              onOpenCourseSearch={() => setIsCourseModalOpen(true)}
               onRefreshOsmCourse={() => void handleRefreshOsmCourse()}
               onFlipToStats={() => {
                 setStatsSubTab('entry');
@@ -812,10 +1053,11 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'scorecard' && (
+        {isCourseChosen && activeTab === 'scorecard' && (
           <div className="h-full overflow-y-auto">
             <ScorecardView
               round={round}
+              roundJustSaved={roundJustSaved}
               onSelectHole={(num) => {
                 handleChangeHole(num);
                 setStatsSubTab('entry');
@@ -823,6 +1065,7 @@ export default function App() {
               }}
               onUpdateHoleMeta={handleUpdateHoleMeta}
               onOverrideHoleScore={handleOverrideHoleScore}
+              onSaveRound={handleSaveRound}
               onResetRound={handleResetRound}
             />
           </div>
@@ -857,37 +1100,30 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Fixed Bottom Thumb Navigation Bar (56px height -> total sticky <= 13% of mobile viewport) */}
-      <nav
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-4 items-center"
-        aria-label="Mobile navigation"
-      >
-        {navItems.map((item) => {
-          const active = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveTab(item.id)}
-              className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
-                active ? 'text-emerald-700 font-semibold' : 'text-slate-500'
-              }`}
-            >
-              {item.icon}
-              <span className="text-[10px] tracking-tight whitespace-nowrap">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Course Search Modal */}
-      <CourseSearchModal
-        isOpen={isCourseModalOpen}
-        onClose={() => setIsCourseModalOpen(false)}
-        userPosition={geo.position}
-        currentCourse={round.course}
-        onSelectCourse={handleSelectCourse}
-      />
+      {/* Mobile Fixed Bottom Thumb Navigation Bar (only active once a course is chosen) */}
+      {isCourseChosen && (
+        <nav
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-4 items-center"
+          aria-label="Mobile navigation"
+        >
+          {navItems.map((item) => {
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleSelectNavTab(item.id)}
+                className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                  active ? 'text-emerald-700 font-semibold' : 'text-slate-500'
+                }`}
+              >
+                {item.icon}
+                <span className="text-[10px] tracking-tight whitespace-nowrap">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
 
       <OfflineIndicator />
     </div>

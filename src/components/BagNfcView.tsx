@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Check, CheckCircle2, Nfc, Play, Plus, Radio, Smartphone, Trash2 } from 'lucide-react';
-import { Club, ClubCategory, DistanceUnit } from '../types/golf';
+import { Club, DistanceUnit } from '../types/golf';
 import { CLUB_PRESETS, ClubPreset, unitSuffix } from '../utils/golfMath';
 import { NfcStatus, NfcTapPayload } from '../hooks/useWebNfc';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -45,27 +45,43 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
   onSimulateTagTap,
 }) => {
   const [newClubName, setNewClubName] = useState('');
-  const [newClubShort, setNewClubShort] = useState('');
-  const [newClubCategory, setNewClubCategory] = useState<ClubCategory>('iron');
-  const [newClubYards, setNewClubYards] = useState('150');
 
   const suffix = unitSuffix(unit);
 
   const handleCreateClub = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newClubName.trim()) return;
+    const trimmedName = newClubName.trim();
+    if (!trimmedName) return;
+
+    const lower = trimmedName.toLowerCase();
+    const category: Club['category'] = lower.includes('putt')
+      ? 'putter'
+      : lower.includes('wedge') || lower.includes('°') || /\b(pw|gw|sw|lw)\b/.test(lower)
+        ? 'wedge'
+        : lower.includes('hybrid') || /\b\dh\b/.test(lower)
+          ? 'hybrid'
+          : lower.includes('wood') || lower.includes('driver') || /\b\dw\b/.test(lower)
+            ? 'wood'
+            : 'iron';
+
+    const typicalYards =
+      category === 'putter' ? 10 : category === 'wedge' ? 100 : category === 'wood' ? 220 : 165;
+
+    const firstToken = trimmedName.split(/\s+/)[0] ?? trimmedName;
+    const shortName =
+      firstToken.length <= 4 ? firstToken.toUpperCase() : trimmedName.slice(0, 3).toUpperCase();
+
     const id = `club_${Date.now()}`;
     const created: Club = {
       id,
-      name: newClubName.trim(),
-      shortName: newClubShort.trim().toUpperCase() || newClubName.trim().slice(0, 3).toUpperCase(),
-      category: newClubCategory,
-      typicalYards: Math.max(5, Number(newClubYards) || 150),
+      name: trimmedName,
+      shortName,
+      category,
+      typicalYards,
     };
     onAddClub(created);
     onStartPairClub(created);
     setNewClubName('');
-    setNewClubShort('');
   };
 
   return (
@@ -375,48 +391,22 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
           </div>
         </div>
 
-        {/* Add Custom Club Row */}
+        {/* Add & Scan Custom Club Row */}
         <form
           onSubmit={handleCreateClub}
-          className="px-5 py-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center gap-2.5"
+          className="px-5 py-4 bg-slate-50 border-t border-slate-200 flex items-center gap-2.5"
         >
           <input
             type="text"
             value={newClubName}
             onChange={(e) => setNewClubName(e.target.value)}
-            placeholder="Custom club (e.g. 54° Wedge)"
+            placeholder="Club name (e.g. 54° Wedge)"
+            aria-label="Club name"
             className="h-10 px-3 rounded-xl border border-slate-300 bg-white text-xs text-[#0F1A14] flex-1 min-w-[150px]"
-          />
-          <input
-            type="text"
-            value={newClubShort}
-            onChange={(e) => setNewClubShort(e.target.value)}
-            placeholder="Short (54°)"
-            className="h-10 px-3 rounded-xl border border-slate-300 bg-white text-xs text-[#0F1A14] w-24"
-          />
-          <select
-            value={newClubCategory}
-            onChange={(e) => setNewClubCategory(e.target.value as ClubCategory)}
-            className="h-10 px-3 rounded-xl border border-slate-300 bg-white text-xs text-[#0F1A14]"
-          >
-            <option value="wood">Wood</option>
-            <option value="hybrid">Hybrid</option>
-            <option value="iron">Iron</option>
-            <option value="wedge">Wedge</option>
-            <option value="putter">Putter</option>
-          </select>
-          <input
-            type="number"
-            min={5}
-            max={350}
-            value={newClubYards}
-            onChange={(e) => setNewClubYards(e.target.value)}
-            className="h-10 px-3 rounded-xl border border-slate-300 bg-white text-xs font-mono tabular-nums text-[#0F1A14] w-24"
-            aria-label="New club yardage"
           />
           <button
             type="submit"
-            className="h-10 px-4 rounded-xl bg-[#0F1A14] text-white text-xs font-semibold hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap"
+            className="h-10 px-4 rounded-xl bg-[#0F1A14] text-white text-xs font-semibold hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add & Scan</span>

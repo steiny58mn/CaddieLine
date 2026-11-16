@@ -73,7 +73,7 @@ interface OpenGolfHoleMapProps {
     startLatLng: LatLngLiteral | null,
     yards: number | null
   ) => void;
-  onOpenCourseSearch: () => void;
+  onOpenCourseSearch?: () => void;
   onRefreshOsmCourse: () => void;
   onFlipToStats?: () => void;
 }
@@ -151,12 +151,12 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   const tapModeRef = useRef(tapMode);
   tapModeRef.current = tapMode;
 
-  // Determine if real GPS is far away from the loaded course (> 15km) so remote testing works smoothly
+  // Determine if real GPS is far away from the loaded course (> 5km) so remote viewing defaults cleanly to the course
   const isGpsOffCourse = useMemo(() => {
     if (!playerPosition || isManualPosition) return false;
     const refPoint = holeData.greenCenterLatLng ?? holeData.teeLatLng ?? course?.location;
     if (!refPoint) return false;
-    return computeDistanceMeters(playerPosition, refPoint) > 15000;
+    return computeDistanceMeters(playerPosition, refPoint) > 5000;
   }, [playerPosition, isManualPosition, holeData.greenCenterLatLng, holeData.teeLatLng, course?.location]);
 
   // "Where I am standing" origin for all live green/bunker/water yardages
@@ -397,10 +397,11 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    const initial = course?.location ?? playerPosition ?? DEFAULT_MAP_CENTER;
+    const initial =
+      holeData.teeLatLng ?? activeGreenCenter ?? course?.location ?? DEFAULT_MAP_CENTER;
     const map = L.map(mapContainerRef.current, {
       center: [initial.lat, initial.lng],
-      zoom: course || playerPosition ? 17 : 5,
+      zoom: holeData.teeLatLng || activeGreenCenter ? 17 : course ? 16 : 5,
       zoomControl: false,
       attributionControl: true,
     });
@@ -471,6 +472,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   const fitMapToCurrentHole = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
+    map.invalidateSize({ pan: false });
 
     const holePoints: L.LatLngTuple[] = [];
     if (holeData.teeLatLng) {
@@ -548,6 +550,8 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     if (lastFitKeyRef.current !== fitKey) {
       lastFitKeyRef.current = fitKey;
       fitMapToCurrentHole();
+      const raf = requestAnimationFrame(() => fitMapToCurrentHole());
+      return () => cancelAnimationFrame(raf);
     }
   }, [
     course?.placeId,
@@ -1251,7 +1255,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
         </div>
 
         {/* Course Prompt or Loading Banner */}
-        {!course && (
+        {!course && onOpenCourseSearch && (
           <button
             type="button"
             onClick={onOpenCourseSearch}

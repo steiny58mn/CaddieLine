@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, Trash2 } from 'lucide-react';
+import { Check, Download, Save, Trash2 } from 'lucide-react';
 import { RoundState, ShotRecord } from '../types/golf';
 import {
   LIE_OPTIONS,
@@ -13,6 +13,9 @@ import {
 interface StatsViewProps {
   round: RoundState;
   savedRounds: RoundState[];
+  roundJustSaved: boolean;
+  onSaveRound: () => void;
+  onResetRound: () => void;
   onLoadRound: (round: RoundState) => void;
   onDeleteSavedRound: (roundId: string) => void;
 }
@@ -20,6 +23,9 @@ interface StatsViewProps {
 export const StatsView: React.FC<StatsViewProps> = ({
   round,
   savedRounds,
+  roundJustSaved,
+  onSaveRound,
+  onResetRound,
   onLoadRound,
   onDeleteSavedRound,
 }) => {
@@ -111,15 +117,38 @@ export const StatsView: React.FC<StatsViewProps> = ({
           </h2>
         </div>
 
-        <button
-          type="button"
-          onClick={handleExportCsv}
-          disabled={allShots.length === 0}
-          className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-2 self-start sm:self-auto whitespace-nowrap"
-        >
-          <Download className="w-4 h-4" />
-          <span>Export Shots CSV</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={onSaveRound}
+            className={`min-h-[44px] px-4 rounded-xl text-xs font-semibold inline-flex items-center gap-2 whitespace-nowrap transition-colors ${
+              roundJustSaved
+                ? 'bg-emerald-50 border border-emerald-300 text-emerald-900'
+                : 'bg-emerald-700 hover:bg-emerald-800 text-white'
+            }`}
+          >
+            {roundJustSaved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            <span>{roundJustSaved ? 'Round Saved' : 'Save Round'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportCsv}
+            disabled={allShots.length === 0}
+            className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-2 whitespace-nowrap"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export CSV</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onResetRound}
+            className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+          >
+            End Round
+          </button>
+        </div>
       </div>
 
       {/* Dispersion & Lie Breakdown Grid */}

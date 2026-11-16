@@ -7,9 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
-  Map as MapIcon,
   Minus,
-  Nfc,
   Plus,
   RotateCcw,
   Trash2,
@@ -36,7 +34,6 @@ import {
   getScoreLabel,
   unitSuffix,
 } from '../utils/golfMath';
-import { NfcStatus } from '../hooks/useWebNfc';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -54,8 +51,6 @@ interface ShotLoggerPanelProps {
   selectedDirection: ShotDirection;
   manualDistanceYards: string;
   autoDetectedDistanceYards: number | null;
-  nfcStatus: NfcStatus;
-  nfcSupported: boolean;
   lastNfcFeedback: string | null;
   onSelectHole: (holeNumber: number) => void;
   onSelectClub: (clubId: string) => void;
@@ -69,9 +64,7 @@ interface ShotLoggerPanelProps {
   onUpdateHoleMeta: (patch: Partial<HolePinData>) => void;
   onPrevHole: () => void;
   onNextHole: () => void;
-  onToggleNfcScan: () => void;
   onOpenBagNfc: () => void;
-  onFlipToMap?: () => void;
 }
 
 export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
@@ -88,8 +81,6 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   selectedDirection,
   manualDistanceYards,
   autoDetectedDistanceYards,
-  nfcStatus,
-  nfcSupported,
   lastNfcFeedback,
   onSelectHole,
   onSelectClub,
@@ -103,9 +94,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onUpdateHoleMeta,
   onPrevHole,
   onNextHole,
-  onToggleNfcScan,
   onOpenBagNfc,
-  onFlipToMap,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
   const holeStrokes = getHoleStrokes(holeScore);
@@ -116,11 +105,14 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const suffix = unitSuffix(unit);
   const { isInstalled } = usePWAInstall();
 
+  const lastShot = holeScore.shots[holeScore.shots.length - 1];
+  const hasOpenNfcShot = Boolean(lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng);
+
   return (
     <div className="flex flex-col h-full bg-white lg:border-r border-slate-200">
       {/* Hole Navigation & Live Score Header */}
       <div className="relative shrink-0 px-3 sm:px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 bg-[#FAFBFA]">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between w-full gap-2">
           <button
             type="button"
             onClick={() => {
@@ -128,14 +120,14 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               onPrevHole();
             }}
             disabled={holeData.holeNumber <= 1}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors shrink-0"
             aria-label="Previous hole"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
 
-          <div className="px-2">
-            <div className="flex items-center gap-2">
+          <div className="px-1 min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setIsHolePickerOpen((prev) => !prev)}
@@ -173,7 +165,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 {formatDistanceValue(holeData.yardage, unit)} {suffix}
               </span>
             </div>
-            <div className="text-xs text-slate-500 mt-0.5 tabular-nums">
+            <div className="text-xs text-slate-500 mt-0.5 tabular-nums truncate">
               Hole: <strong className="text-[#0F1A14]">{holeStrokes || '—'}</strong>{' '}
               {holeStrokes > 0 && `(${getScoreLabel(holeStrokes, holeData.par)})`}
               <span className="mx-1.5 text-slate-300" aria-hidden="true">
@@ -191,48 +183,17 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               onNextHole();
             }}
             disabled={holeData.holeNumber >= 18}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors shrink-0"
             aria-label="Next hole"
           >
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Quick Actions: Flip to Map & Web NFC */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={nfcSupported ? onToggleNfcScan : onOpenBagNfc}
-            className={`min-h-[44px] px-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-              nfcStatus === 'scanning'
-                ? 'bg-emerald-700 text-white border-emerald-700'
-                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-            }`}
-            title="GolfPad NFC Sensor Scanner"
-          >
-            <Nfc className="w-4 h-4" />
-            <span className="hidden sm:inline">{nfcStatus === 'scanning' ? 'NFC Active' : 'NFC'}</span>
-          </button>
-
-          {onFlipToMap && (
-            <button
-              type="button"
-              onClick={onFlipToMap}
-              className="min-h-[44px] px-3 rounded-xl bg-[#0F1A14] hover:bg-emerald-900 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
-              title="Flip to Course GPS Map"
-            >
-              <MapIcon className="w-4 h-4 text-emerald-400" />
-              <span>Map</span>
-            </button>
-          )}
-        </div>
-
         {isHolePickerOpen && (
           <div className="absolute left-3 right-3 top-full mt-1.5 z-30 rounded-2xl bg-white border border-slate-200 shadow-xl p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-700">
-                Select Hole (zooms map to hole)
-              </span>
+              <span className="text-xs font-semibold text-slate-700">Select Hole</span>
               <span className="text-[11px] text-emerald-700 font-medium">● Mapped</span>
             </div>
             <div className="grid grid-cols-6 gap-1.5">
@@ -287,19 +248,19 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         )}
 
-        {/* 1. Club Selector */}
+        {/* 1. Club Selected Dropdown */}
         <div>
           <div className="flex items-center justify-between mb-2 gap-2">
-            <span className="text-xs font-semibold text-slate-700">
-              1. Club Selected — <span className="text-[#0F1A14]">{selectedClub?.name}</span>
-            </span>
+            <label htmlFor="club-selected-dropdown" className="text-xs font-semibold text-slate-700">
+              1. Club Selected
+            </label>
             {bag.length === 0 ? (
               <button
                 type="button"
                 onClick={onOpenBagNfc}
                 className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
               >
-                Pair NFC Tags →
+                Pair Saved Clubs →
               </button>
             ) : (
               <span className="text-xs font-mono text-slate-500 tabular-nums">
@@ -307,32 +268,35 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
-            {availableClubs.map((club) => {
-              const active = club.id === selectedClub?.id;
-              return (
-                <button
-                  key={club.id}
-                  type="button"
-                  onClick={() => onSelectClub(club.id)}
-                  className={`min-h-[44px] min-w-[52px] px-2.5 py-1.5 rounded-xl border text-center transition-colors shrink-0 flex flex-col items-center justify-center ${
-                    active
-                      ? 'bg-[#0F1A14] text-white border-[#0F1A14] shadow-sm'
-                      : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  <span className="text-xs font-bold leading-none">{club.shortName}</span>
-                  <span
-                    className={`text-[10px] font-mono tabular-nums mt-1 leading-none ${
-                      active ? 'text-emerald-300' : 'text-slate-500'
-                    }`}
-                  >
-                    {club.category === 'putter' ? 'Green' : `${formatDistanceValue(club.typicalYards, unit)}`}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+
+          <select
+            id="club-selected-dropdown"
+            value={selectedClub?.id ?? ''}
+            onChange={(e) => onSelectClub(e.target.value)}
+            className="w-full h-11 px-3.5 rounded-xl border border-slate-300 bg-white text-sm font-semibold text-[#0F1A14] focus:outline-none focus:ring-2 focus:ring-emerald-600"
+          >
+            {bag.length > 0 ? (
+              bag.map((club) => (
+                <option key={club.id} value={club.id}>
+                  {club.name} ({club.shortName})
+                  {club.category === 'putter'
+                    ? ' — Green'
+                    : ` — ${formatDistanceValue(club.typicalYards, unit)} ${suffix}`}
+                </option>
+              ))
+            ) : (
+              <>
+                <option value="" disabled>
+                  No clubs paired yet — using standard list
+                </option>
+                {CLUB_PRESETS.map((club) => (
+                  <option key={club.id} value={club.id}>
+                    {club.name} ({club.shortName})
+                  </option>
+                ))}
+              </>
+            )}
+          </select>
         </div>
 
         {/* 2. Where Did the Shot Go? (Lie & Result) */}
@@ -427,7 +391,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               onChange={(e) => onChangeManualDistance(e.target.value)}
               placeholder={
                 autoDetectedDistanceYards !== null
-                  ? String(autoDetectedDistanceYards)
+                  ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} (live GPS)`
                   : selectedClub?.category === 'putter'
                     ? '12'
                     : String(selectedClub?.typicalYards ?? 150)
@@ -446,8 +410,9 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           >
             <Flag className="w-4 h-4" />
             <span>
-              Log Shot #{holeScore.shots.length + 1} · {selectedClub?.shortName} (
-              {getLieMeta(selectedLie).shortLabel})
+              {hasOpenNfcShot
+                ? `Finish Shot #${holeScore.shots.length} · ${lastShot.clubShortName} (${getLieMeta(selectedLie).shortLabel})`
+                : `Log Shot #${holeScore.shots.length + 1} · ${selectedClub?.shortName ?? 'Club'} (${getLieMeta(selectedLie).shortLabel})`}
             </span>
           </button>
           {holeScore.shots.length > 0 && (
@@ -512,17 +477,32 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
 
           {holeScore.shots.length === 0 ? (
             <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-3.5 text-xs text-slate-500">
-              No shots logged on Hole {holeData.holeNumber} yet. Choose a club and where the shot
-              went, tap a GolfPad NFC tag, or flip to the Map to tap a shot landing spot.
+              No shots logged on Hole {holeData.holeNumber} yet. Tap a GolfPad NFC tag on your club
+              to start tracking GPS shot distance automatically, or log a shot above.
             </div>
           ) : (
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
-              {holeScore.shots.map((shot: ShotRecord) => {
+              {holeScore.shots.map((shot: ShotRecord, idx) => {
                 const lieMeta = getLieMeta(shot.lie);
+                const isActiveOpenNfc =
+                  idx === holeScore.shots.length - 1 &&
+                  shot.source === 'nfc' &&
+                  !shot.endLatLng;
+                const displayDistance =
+                  shot.distanceYards !== null
+                    ? `${formatDistanceValue(shot.distanceYards, unit)} ${suffix}`
+                    : isActiveOpenNfc && autoDetectedDistanceYards !== null
+                      ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live GPS)`
+                      : isActiveOpenNfc
+                        ? 'Tracking GPS · scan next tag to end'
+                        : 'Distance not set';
+
                 return (
                   <div
                     key={shot.id}
-                    className="px-3 py-2.5 bg-white flex items-center justify-between gap-2"
+                    className={`px-3 py-2.5 flex items-center justify-between gap-2 ${
+                      isActiveOpenNfc ? 'bg-emerald-50/60' : 'bg-white'
+                    }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
@@ -535,12 +515,12 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                         <div className="text-xs font-semibold text-[#0F1A14] truncate">
                           {shot.clubName}
                           <span className="text-slate-400 font-normal mx-1">·</span>
-                          <span className="font-medium text-slate-700">{lieMeta.label}</span>
+                          <span className="font-medium text-slate-700">
+                            {isActiveOpenNfc ? 'In Progress' : lieMeta.label}
+                          </span>
                         </div>
                         <div className="text-[11px] text-slate-500 font-mono tabular-nums">
-                          {shot.distanceYards !== null
-                            ? `${formatDistanceValue(shot.distanceYards, unit)} ${suffix}`
-                            : 'Distance not set'}
+                          {displayDistance}
                           {' · '}
                           {shot.direction === 'straight'
                             ? 'On Line'
