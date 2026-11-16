@@ -112,8 +112,41 @@ interface OpenGolfHoleItem {
   yardages?: Record<string, number>;
 }
 
+const GOLF_API_ENV_VARS = [
+  'GOLFCOURSE_API_KEY',
+  'GOLF_COURSE_API_KEY',
+  'GOLF_API_KEY',
+  'GOLFAPI_KEY',
+  'VITE_GOLFCOURSE_API_KEY',
+  'VITE_GOLF_API_KEY',
+  'VITE_GOLFAPI_KEY',
+];
+
+function getGolfApiKeyDiagnostic() {
+  const matched = GOLF_API_ENV_VARS.find((name) => Boolean(process.env[name]?.trim()));
+  const rawKey = matched ? process.env[matched]!.trim() : '';
+  const masked = rawKey
+    ? rawKey.length <= 8
+      ? `${rawKey.slice(0, 2)}••••${rawKey.slice(-2)} (${rawKey.length} chars)`
+      : `${rawKey.slice(0, 4)}••••${rawKey.slice(-4)} (${rawKey.length} chars)`
+    : 'NOT_SET';
+
+  return {
+    configured: Boolean(rawKey),
+    source: matched ?? null,
+    masked,
+    preview: rawKey ? `${rawKey.slice(0, 4)}...` : '',
+    length: rawKey.length,
+    envVarsChecked: GOLF_API_ENV_VARS,
+  };
+}
+
 function getGolfCourseApiKey(): string {
-  return (process.env.GOLFCOURSE_API_KEY || process.env.GOLF_COURSE_API_KEY || '').trim();
+  for (const name of GOLF_API_ENV_VARS) {
+    const val = process.env[name]?.trim();
+    if (val) return val;
+  }
+  return '';
 }
 
 function isDiscGolfCourse(...parts: Array<string | undefined | null>): boolean {
@@ -700,10 +733,12 @@ out geom;
   }
 
   app.get('/api/golfcourse/status', (_req, res) => {
+    const diag = getGolfApiKeyDiagnostic();
     res.json({
       configured: true,
       openGolfApi: true,
-      golfCourseApi: Boolean(getGolfCourseApiKey()),
+      golfCourseApi: diag.configured,
+      apiKeyStatus: diag,
     });
   });
 
@@ -1360,7 +1395,16 @@ out center 30;
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
+    const diag = getGolfApiKeyDiagnostic();
     console.log(`CaddieLine server listening on http://0.0.0.0:${PORT}`);
+    console.log(
+      `[Deployment Check] GolfCourseAPI Key: ${
+        diag.configured
+          ? `CONFIGURED via ${diag.source} (${diag.masked})`
+          : 'NOT CONFIGURED (checked: ' + GOLF_API_ENV_VARS.join(', ') + ')'
+      }`
+    );
+    console.log('[Deployment Check] OpenGolfAPI: ENABLED (keyless, 32,000+ courses)');
   });
 }
 

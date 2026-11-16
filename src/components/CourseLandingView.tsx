@@ -17,8 +17,10 @@ import {
   isDiscGolfCourse,
 } from '../services/osmGolfService';
 import {
+  checkGolfApiStatus,
   combineSubCourseTees,
   fetchGolfCourseMatch,
+  GolfApiStatus,
   matchSubCourseNameToGca,
   pickDefaultTee,
 } from '../services/golfCourseApiService';
@@ -93,6 +95,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   } | null>(null);
   const [comboFrontId, setComboFrontId] = useState<string>('');
   const [comboBackId, setComboBackId] = useState<string>('');
+  const [apiStatus, setApiStatus] = useState<GolfApiStatus | null>(null);
+  const [showKeyDetails, setShowKeyDetails] = useState(false);
+
+  useEffect(() => {
+    void checkGolfApiStatus().then((status) => {
+      setApiStatus(status);
+    });
+  }, []);
 
   const hasAutoSearchedRef = useRef(false);
   const lastSearchedPosRef = useRef<LatLngLiteral | null>(null);
@@ -233,9 +243,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
       setLoadingCourseId(course.placeId);
       setErrorMessage(null);
       try {
+        const safeLocation = course.location && !Number.isNaN(course.location.lat)
+          ? course.location
+          : userPosition ?? { lat: 0, lng: 0 };
+        const safeCourse: CourseInfo = { ...course, location: safeLocation };
+
         const [geomResult, gcaResult] = await Promise.allSettled([
-          fetchCourseGolfGeometry(course, true),
-          fetchGolfCourseMatch(course),
+          fetchCourseGolfGeometry(safeCourse, true),
+          fetchGolfCourseMatch(safeCourse),
         ]);
 
         const gcaMatches =
@@ -372,7 +387,8 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
           onSelectCourse(course, fallbackGeometry);
         } catch (innerErr) {
           console.error('Critical failure starting round:', innerErr);
-          setErrorMessage(`Could not load hole & scorecard data for ${course.name}. Please try again.`);
+          const msg = innerErr instanceof Error ? innerErr.message : String(innerErr);
+          setErrorMessage(`Could not load hole & scorecard data for ${course.name}: ${msg}`);
         }
       } finally {
         setLoadingCourseId(null);
@@ -452,7 +468,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => void handleNearbySearch()}
@@ -462,7 +478,46 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                 <Compass className="w-4 h-4" />
                 <span>{userPosition ? 'Refresh Nearest Courses' : 'Refresh Nearby Courses'}</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setShowKeyDetails((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium px-2.5 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                title="View deployment API key diagnostics"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    apiStatus?.apiKeyStatus?.configured ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+                <span className="font-mono text-[11px]">
+                  {apiStatus?.apiKeyStatus?.configured
+                    ? `GolfAPI: ${apiStatus.apiKeyStatus.masked}`
+                    : 'GolfAPI Key: Not Set (Diagnostics)'}
+                </span>
+              </button>
             </div>
+
+            {showKeyDetails && (
+              <div className="p-3 rounded-xl bg-slate-900 text-slate-200 text-xs font-mono space-y-1.5 mt-2">
+                <div className="flex items-center justify-between font-sans text-slate-300 font-semibold text-[11px] pb-1 border-b border-slate-800">
+                  <span>DEPLOYMENT API KEY DIAGNOSTICS</span>
+                  <span className="text-[10px] text-emerald-400">OpenGolfAPI: ACTIVE</span>
+                </div>
+                <div>Status: {apiStatus?.apiKeyStatus?.configured ? 'CONFIGURED ✓' : 'NOT DETECTED ⚠️'}</div>
+                <div>Source Env Var: {apiStatus?.apiKeyStatus?.source ?? 'None matched'}</div>
+                <div>Masked Key: {apiStatus?.apiKeyStatus?.masked ?? 'None'}</div>
+                <div>Key Length: {apiStatus?.apiKeyStatus?.length ?? 0} characters</div>
+                <div className="text-[10px] text-slate-400 pt-1">
+                  Checked Env Vars: {apiStatus?.apiKeyStatus?.envVarsChecked?.join(', ') || 'GOLFCOURSE_API_KEY, GOLF_API_KEY'}
+                </div>
+                {!apiStatus?.apiKeyStatus?.configured && (
+                  <div className="text-[11px] text-amber-300 pt-1 font-sans">
+                    Tip: Set <code>GOLF_API_KEY</code> or <code>GOLFCOURSE_API_KEY</code> in your deployment environment variables. OpenGolfAPI keyless fallback remains active.
+                  </div>
+                )}
+              </div>
+            )}
           </form>
 
           <div className="divide-y divide-slate-100 max-h-[460px] overflow-y-auto">

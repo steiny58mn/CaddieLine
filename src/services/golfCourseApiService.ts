@@ -434,3 +434,43 @@ export function formatTeeSummaryLabel(tee: GolfCourseTeeSet): string {
   }
   return parts.join(' · ');
 }
+
+export interface GolfApiStatus {
+  configured: boolean;
+  openGolfApi: boolean;
+  golfCourseApi: boolean;
+  apiKeyStatus?: {
+    configured: boolean;
+    source: string | null;
+    masked: string;
+    preview: string;
+    length: number;
+    envVarsChecked: string[];
+  };
+}
+
+export async function checkGolfApiStatus(): Promise<GolfApiStatus> {
+  try {
+    const res = await fetch('/api/golfcourse/status');
+    if (res.ok) {
+      const data = (await res.json()) as GolfApiStatus;
+      console.log('[CaddieLine Deployment Check] /api/golfcourse/status:', data);
+      return data;
+    }
+  } catch (err) {
+    console.warn('[CaddieLine Deployment Check] Could not reach /api/golfcourse/status:', err);
+  }
+  return {
+    configured: false,
+    openGolfApi: true,
+    golfCourseApi: false,
+    apiKeyStatus: {
+      configured: false,
+      source: null,
+      masked: 'NOT_REACHABLE',
+      preview: '',
+      length: 0,
+      envVarsChecked: [],
+    },
+  };
+}

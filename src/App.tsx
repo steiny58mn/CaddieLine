@@ -17,6 +17,7 @@ import {
   CLUB_PRESETS,
   ClubPreset,
   DEFAULT_CLUB_BAG,
+  DEFAULT_PAR_LAYOUT,
   computeDistanceMeters,
   computeDistanceYards,
   createInitialRoundState,
@@ -251,14 +252,24 @@ export default function App() {
     }
   }, [autoLogOnNfc]);
 
-  const currentHoleData = round.holes[round.currentHole];
-  const currentHoleScore = round.scores[round.currentHole];
+  const currentHoleData = round.holes[round.currentHole] ?? {
+    holeNumber: round.currentHole,
+    par: 4,
+    handicap: round.currentHole,
+    yardage: 380,
+    hazards: [],
+  };
+  const currentHoleScore = round.scores[round.currentHole] ?? {
+    holeNumber: round.currentHole,
+    shots: [],
+    manualPutts: 0,
+  };
 
   const roundTotals = useMemo(() => {
     const nums = Array.from({ length: 18 }, (_, i) => i + 1);
     const played = nums.filter((n) => isHolePlayed(round.scores[n]));
     const strokes = nums.reduce((acc, n) => acc + getHoleStrokes(round.scores[n]), 0);
-    const parPlayed = played.reduce((acc, n) => acc + round.holes[n].par, 0);
+    const parPlayed = played.reduce((acc, n) => acc + (round.holes[n]?.par ?? 4), 0);
     return {
       playedCount: played.length,
       relativeToPar: strokes - parPlayed,
@@ -1072,9 +1083,23 @@ export default function App() {
         ? { ...course, selectedTeeId: selectedTee.id }
         : course;
 
+      // Ensure all 18 holes have baseline data
+      for (let i = 1; i <= 18; i += 1) {
+        if (!populatedHoles[i]) {
+          const def = DEFAULT_PAR_LAYOUT[i - 1];
+          populatedHoles[i] = {
+            holeNumber: i,
+            par: def.par,
+            handicap: def.handicap,
+            yardage: def.yardage,
+            hazards: [],
+          };
+        }
+      }
+
       // Determine starting hole: detect nearest tee if player is on the course (< 5km), else default to Hole #1
       let startingHole = 1;
-      if (geo.position && computeDistanceMeters(geo.position, hydratedCourse.location) <= 5000) {
+      if (geo.position && hydratedCourse.location && computeDistanceMeters(geo.position, hydratedCourse.location) <= 5000) {
         let closestDist = 350;
         for (let num = 1; num <= 18; num += 1) {
           const tee = populatedHoles[num]?.teeLatLng;

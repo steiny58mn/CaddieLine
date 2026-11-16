@@ -182,7 +182,21 @@ export function getLieMeta(lie: ShotLie): LieOptionMeta {
 const EARTH_RADIUS_METERS = 6371000;
 const METERS_TO_YARDS = 1.0936133;
 
-export function computeDistanceMeters(a: LatLngLiteral, b: LatLngLiteral): number {
+export function computeDistanceMeters(a?: LatLngLiteral | null, b?: LatLngLiteral | null): number {
+  if (
+    !a ||
+    !b ||
+    typeof a.lat !== 'number' ||
+    typeof a.lng !== 'number' ||
+    typeof b.lat !== 'number' ||
+    typeof b.lng !== 'number' ||
+    Number.isNaN(a.lat) ||
+    Number.isNaN(a.lng) ||
+    Number.isNaN(b.lat) ||
+    Number.isNaN(b.lng)
+  ) {
+    return 0;
+  }
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
   const dLng = toRad(b.lng - a.lng);
@@ -195,7 +209,7 @@ export function computeDistanceMeters(a: LatLngLiteral, b: LatLngLiteral): numbe
   return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export function computeDistanceYards(a: LatLngLiteral, b: LatLngLiteral): number {
+export function computeDistanceYards(a?: LatLngLiteral | null, b?: LatLngLiteral | null): number {
   return Math.round(computeDistanceMeters(a, b) * METERS_TO_YARDS);
 }
 
