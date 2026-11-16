@@ -1,0 +1,820 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { BarChart3, ClipboardList, Flag, Nfc, Search } from 'lucide-react';
+import {
+  AppViewTab,
+  Club,
+  CourseInfo,
+  HolePinData,
+  LatLngLiteral,
+  MapTapMode,
+  OsmCourseGeometry,
+  RoundState,
+  ShotDirection,
+  ShotLie,
+  ShotRecord,
+} from './types/golf';
+import {
+  DEFAULT_CLUB_BAG,
+  computeDistanceYards,
+  createInitialRoundState,
+  getHoleStrokes,
+  getLieMeta,
+  isHolePlayed,
+} from './utils/golfMath';
+import {
+  applyOsmGeometryToHoles,
+  fetchCourseGolfGeometry,
+  getCachedOsmCourseGeometry,
+  summarizeOsmGeometry,
+} from './services/osmGolfService';
+import { useGeolocation } from './hooks/useGeolocation';
+import { NfcTapPayload, useWebNfc } from './hooks/useWebNfc';
+import { OpenGolfHoleMap } from './components/OpenGolfHoleMap';
+import { ShotLoggerPanel } from './components/ShotLoggerPanel';
+import { ScorecardView } from './components/ScorecardView';
+import { StatsView } from './components/StatsView';
+import { BagNfcView } from './components/BagNfcView';
+import { CourseSearchModal } from './components/CourseSearchModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
+
+const STORAGE_KEYS = {
+  ROUND: 'caddieline_active_round_v1',
+  SAVED_ROUNDS: 'caddieline_saved_rounds_v1',
+  BAG: 'caddieline_club_bag_v1',
+  AUTO_NFC: 'caddieline_auto_nfc_v1',
+};
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<AppViewTab>('live');
+  const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
+
+  const [round, setRound] = useState<RoundState>(() =>
+    loadFromStorage(STORAGE_KEYS.ROUND, createInitialRoundState())
+  );
+  const [savedRounds, setSavedRounds] = useState<RoundState[]>(() =>
+    loadFromStorage(STORAGE_KEYS.SAVED_ROUNDS, [])
+  );
+  const [bag, setBag] = useState<Club[]>(() =>
+    loadFromStorage(STORAGE_KEYS.BAG, DEFAULT_CLUB_BAG)
+  );
+  const [autoLogOnNfc, setAutoLogOnNfc] = useState<boolean>(() =>
+    loadFromStorage(STORAGE_KEYS.AUTO_NFC, false)
+  );
+
+  // OpenStreetMap course geometry state (greens, bunkers, water hazards, holes)
+  const [courseGeometry, setCourseGeometry] = useState<OsmCourseGeometry | null>(() =>
+    round.course ? getCachedOsmCourseGeometry(round.course.placeId) : null
+  );
+  const [isLoadingGeometry, setIsLoadingGeometry] = useState(false);
+  const [geometryError, setGeometryError] = useState<string | null>(null);
+
+  // Shot logger working state
+  const [selectedClubId, setSelectedClubId] = useState<string>('dr');
+  const [selectedLie, setSelectedLie] = useState<ShotLie>('fairway');
+  const [selectedDirection, setSelectedDirection] = useState<ShotDirection>('straight');
+  const [manualDistanceYards, setManualDistanceYards] = useState<string>('');
+  const [pendingStartLatLng, setPendingStartLatLng] = useState<LatLngLiteral | null>(null);
+
+  // Map interaction state
+  const [tapMode, setTapMode] = useState<MapTapMode>('measure');
+  const [targetPin, setTargetPin] = useState<LatLngLiteral | null>(null);
+
+  // NFC pairing & toast feedback
+  const [pairingClubId, setPairingClubId] = useState<string | null>(null);
+  const [lastNfcFeedback, setLastNfcFeedback] = useState<string | null>(null);
+
+  const geo = useGeolocation();
+
+  // Ensure geometry is loaded if resuming a saved round with a course
+  useEffect(() => {
+    const activeCourse = round.course;
+    if (!activeCourse) {
+      setCourseGeometry(null);
+      return;
+    }
+    if (courseGeometry?.courseId === activeCourse.placeId) return;
+
+    const cached = getCachedOsmCourseGeometry(activeCourse.placeId);
+    if (cached) {
+      setCourseGeometry(cached);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingGeometry(true);
+    setGeometryError(null);
+    fetchCourseGolfGeometry(activeCourse)
+      .then((geom) => {
+        if (!cancelled) {
+          setCourseGeometry(geom);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGeometryError('Could not load OSM course features');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingGeometry(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [round.course?.placeId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ROUND, JSON.stringify(round));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [round]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.SAVED_ROUNDS, JSON.stringify(savedRounds));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [savedRounds]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.BAG, JSON.stringify(bag));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [bag]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.AUTO_NFC, JSON.stringify(autoLogOnNfc));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [autoLogOnNfc]);
+
+  const currentHoleData = round.holes[round.currentHole];
+  const currentHoleScore = round.scores[round.currentHole];
+
+  const roundTotals = useMemo(() => {
+    const nums = Array.from({ length: 18 }, (_, i) => i + 1);
+    const played = nums.filter((n) => isHolePlayed(round.scores[n]));
+    const strokes = nums.reduce((acc, n) => acc + getHoleStrokes(round.scores[n]), 0);
+    const parPlayed = played.reduce((acc, n) => acc + round.holes[n].par, 0);
+    return {
+      playedCount: played.length,
+      relativeToPar: strokes - parPlayed,
+    };
+  }, [round]);
+
+  // Auto-calculate shot distance from previous lie/tee to current GPS or target pin
+  const currentOriginLatLng: LatLngLiteral | null = useMemo(() => {
+    if (pendingStartLatLng) return pendingStartLatLng;
+    const shots = currentHoleScore.shots;
+    const lastWithEnd = [...shots].reverse().find((s) => s.endLatLng);
+    if (lastWithEnd?.endLatLng) return lastWithEnd.endLatLng;
+    if (shots.length === 0 && currentHoleData.teeLatLng) return currentHoleData.teeLatLng;
+    return null;
+  }, [pendingStartLatLng, currentHoleScore.shots, currentHoleData.teeLatLng]);
+
+  const autoDetectedDistanceYards = useMemo(() => {
+    if (currentOriginLatLng && geo.position) {
+      const dist = computeDistanceYards(currentOriginLatLng, geo.position);
+      if (dist > 0 && dist < 450) return dist;
+    }
+    if (currentOriginLatLng && targetPin) {
+      const dist = computeDistanceYards(currentOriginLatLng, targetPin);
+      if (dist > 0 && dist < 450) return dist;
+    }
+    return null;
+  }, [currentOriginLatLng, geo.position, targetPin]);
+
+  const handleSelectLie = useCallback((lie: ShotLie) => {
+    setSelectedLie(lie);
+    const meta = getLieMeta(lie);
+    setSelectedDirection(meta.defaultDirection);
+  }, []);
+
+  const commitShot = useCallback(
+    (params: {
+      clubId: string;
+      lie: ShotLie;
+      direction: ShotDirection;
+      distanceYards: number | null;
+      startLatLng?: LatLngLiteral;
+      endLatLng?: LatLngLiteral;
+      source: 'manual' | 'nfc' | 'map';
+    }) => {
+      const club = bag.find((c) => c.id === params.clubId) ?? bag[0];
+      const lieMeta = getLieMeta(params.lie);
+
+      setRound((prev) => {
+        const holeNum = prev.currentHole;
+        const holeScore = prev.scores[holeNum];
+        const nextStrokeNum = holeScore.shots.length + 1;
+
+        const newShot: ShotRecord = {
+          id: `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          holeNumber: holeNum,
+          strokeNumber: nextStrokeNum,
+          clubId: club.id,
+          clubName: club.name,
+          clubShortName: club.shortName,
+          lie: params.lie,
+          direction: params.direction,
+          penaltyStrokes: lieMeta.penalty,
+          distanceYards: params.distanceYards,
+          startLatLng: params.startLatLng,
+          endLatLng: params.endLatLng,
+          timestamp: Date.now(),
+          source: params.source,
+        };
+
+        const isPutter = club.category === 'putter' || club.id === 'pt';
+        const nextManualPutts = isPutter
+          ? Math.max(holeScore.manualPutts, holeScore.shots.filter((s) => s.clubId === 'pt').length + 1)
+          : holeScore.manualPutts;
+
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          scores: {
+            ...prev.scores,
+            [holeNum]: {
+              ...holeScore,
+              shots: [...holeScore.shots, newShot],
+              manualPutts: nextManualPutts,
+            },
+          },
+        };
+      });
+
+      // Suggest next club logically after logging a shot
+      if (params.lie === 'green' || params.lie === 'holed') {
+        const putter = bag.find((c) => c.category === 'putter');
+        if (putter) setSelectedClubId(putter.id);
+      } else if (club.id === 'dr' || club.category === 'wood') {
+        const midIron = bag.find((c) => c.id === '7i') ?? bag[Math.min(5, bag.length - 1)];
+        if (midIron) setSelectedClubId(midIron.id);
+      }
+      setManualDistanceYards('');
+    },
+    [bag]
+  );
+
+  const handleLogShotManual = useCallback(() => {
+    const parsedDist = manualDistanceYards.trim()
+      ? Number(manualDistanceYards)
+      : autoDetectedDistanceYards;
+    const validDist =
+      parsedDist !== null && !Number.isNaN(parsedDist) && parsedDist > 0 ? parsedDist : null;
+
+    const endPos = geo.position ?? targetPin ?? undefined;
+    const startPos =
+      currentOriginLatLng ??
+      (currentHoleScore.shots.length === 0 ? currentHoleData.teeLatLng : undefined);
+
+    commitShot({
+      clubId: selectedClubId,
+      lie: selectedLie,
+      direction: selectedDirection,
+      distanceYards: validDist,
+      startLatLng: startPos ?? undefined,
+      endLatLng: endPos,
+      source: 'manual',
+    });
+
+    if (endPos) {
+      setPendingStartLatLng(endPos);
+    }
+    setTargetPin(null);
+  }, [
+    manualDistanceYards,
+    autoDetectedDistanceYards,
+    geo.position,
+    targetPin,
+    currentOriginLatLng,
+    currentHoleScore.shots.length,
+    currentHoleData.teeLatLng,
+    commitShot,
+    selectedClubId,
+    selectedLie,
+    selectedDirection,
+  ]);
+
+  const handleQuickLogFromMap = useCallback(
+    (endLatLng: LatLngLiteral, startLatLng: LatLngLiteral | null, yards: number | null) => {
+      commitShot({
+        clubId: selectedClubId,
+        lie: selectedLie,
+        direction: selectedDirection,
+        distanceYards: yards,
+        startLatLng: startLatLng ?? undefined,
+        endLatLng,
+        source: 'map',
+      });
+      setPendingStartLatLng(endLatLng);
+    },
+    [commitShot, selectedClubId, selectedLie, selectedDirection]
+  );
+
+  // GolfPad Web NFC Tag Handler
+  const handleNfcTagDetected = useCallback(
+    async (payload: NfcTapPayload) => {
+      // 1. Pairing Mode: bind scanned hardware tag UID to selected club
+      if (pairingClubId) {
+        setBag((prev) =>
+          prev.map((c) => (c.id === pairingClubId ? { ...c, nfcTagId: payload.tagId } : c))
+        );
+        const targetClub = bag.find((c) => c.id === pairingClubId);
+        setLastNfcFeedback(
+          `Paired NFC tag ${payload.tagId} to ${targetClub?.name ?? 'club'}.`
+        );
+        setPairingClubId(null);
+        return;
+      }
+
+      // 2. Active Round Mode: match tagId to club in bag
+      const matchedClub = bag.find(
+        (c) => c.nfcTagId && c.nfcTagId.toUpperCase() === payload.tagId.toUpperCase()
+      );
+
+      if (!matchedClub) {
+        setLastNfcFeedback(
+          `Unpaired NFC tag detected (${payload.tagId}). Open Bag & NFC to assign it to a club.`
+        );
+        return;
+      }
+
+      const gpsFix = (await geo.requestSingleFix()) ?? geo.position;
+      setSelectedClubId(matchedClub.id);
+
+      // Update distance of previous shot if we now have the player's next ball GPS fix
+      let measuredPrevDist: number | null = null;
+      if (gpsFix) {
+        setRound((prev) => {
+          const holeNum = prev.currentHole;
+          const holeScore = prev.scores[holeNum];
+          if (holeScore.shots.length === 0) return prev;
+          const lastShot = holeScore.shots[holeScore.shots.length - 1];
+          const origin = lastShot.startLatLng ?? prev.holes[holeNum].teeLatLng;
+          if (!origin) return prev;
+
+          measuredPrevDist = computeDistanceYards(origin, gpsFix);
+          const updatedShots = holeScore.shots.map((s, idx) =>
+            idx === holeScore.shots.length - 1
+              ? { ...s, endLatLng: gpsFix, distanceYards: measuredPrevDist }
+              : s
+          );
+          return {
+            ...prev,
+            updatedAt: Date.now(),
+            scores: {
+              ...prev.scores,
+              [holeNum]: {
+                ...holeScore,
+                shots: updatedShots,
+              },
+            },
+          };
+        });
+      }
+
+      if (autoLogOnNfc) {
+        const defaultLie: ShotLie = matchedClub.category === 'putter' ? 'green' : 'fairway';
+        commitShot({
+          clubId: matchedClub.id,
+          lie: defaultLie,
+          direction: 'straight',
+          distanceYards: null,
+          startLatLng: gpsFix ?? undefined,
+          source: 'nfc',
+        });
+        setLastNfcFeedback(
+          `NFC ${matchedClub.name} logged (${payload.source})${
+            measuredPrevDist ? ` · Prev shot ${measuredPrevDist} yds` : ''
+          }`
+        );
+      } else {
+        if (gpsFix) {
+          setPendingStartLatLng(gpsFix);
+        }
+        setLastNfcFeedback(
+          `NFC selected ${matchedClub.name}${
+            measuredPrevDist ? ` · Measured prev shot: ${measuredPrevDist} yds` : ' · Ready to log lie'
+          }`
+        );
+      }
+    },
+    [pairingClubId, bag, geo, autoLogOnNfc, commitShot]
+  );
+
+  const nfc = useWebNfc(handleNfcTagDetected);
+
+  const handleChangeHole = useCallback(
+    (holeNumber: number) => {
+      const clamped = Math.max(1, Math.min(18, holeNumber));
+      setRound((prev) => ({
+        ...prev,
+        currentHole: clamped,
+      }));
+      if (geo.isManualOverride) {
+        geo.resumeLiveGps();
+      }
+      setPendingStartLatLng(null);
+      setTargetPin(null);
+      setManualDistanceYards('');
+      setSelectedClubId('dr');
+      setSelectedLie('fairway');
+      setSelectedDirection('straight');
+    },
+    [geo]
+  );
+
+  const handleUpdateHoleMeta = useCallback((holeNumber: number, patch: Partial<HolePinData>) => {
+    setRound((prev) => ({
+      ...prev,
+      updatedAt: Date.now(),
+      holes: {
+        ...prev.holes,
+        [holeNumber]: {
+          ...prev.holes[holeNumber],
+          ...patch,
+        },
+      },
+    }));
+  }, []);
+
+  const handleDeleteShot = useCallback((shotId: string) => {
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      const filtered = holeScore.shots
+        .filter((s) => s.id !== shotId)
+        .map((s, idx) => ({ ...s, strokeNumber: idx + 1 }));
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: filtered,
+          },
+        },
+      };
+    });
+  }, []);
+
+  const handleUndoLastShot = useCallback(() => {
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      if (holeScore.shots.length === 0) return prev;
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: holeScore.shots.slice(0, -1),
+          },
+        },
+      };
+    });
+  }, []);
+
+  const handleUpdatePutts = useCallback((putts: number) => {
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            manualPutts: Math.max(0, putts),
+          },
+        },
+      };
+    });
+  }, []);
+
+  const handleOverrideHoleScore = useCallback((holeNumber: number, score: number | undefined) => {
+    setRound((prev) => ({
+      ...prev,
+      updatedAt: Date.now(),
+      scores: {
+        ...prev.scores,
+        [holeNumber]: {
+          ...prev.scores[holeNumber],
+          manualScoreOverride: score,
+        },
+      },
+    }));
+  }, []);
+
+  const handleSelectCourse = useCallback((course: CourseInfo, geometry: OsmCourseGeometry) => {
+    setCourseGeometry(geometry);
+    setGeometryError(null);
+    const populatedHoles = applyOsmGeometryToHoles(geometry);
+
+    setRound((prev) => ({
+      ...prev,
+      course,
+      currentHole: 1,
+      holes: populatedHoles,
+      updatedAt: Date.now(),
+    }));
+    setPendingStartLatLng(null);
+    setTargetPin(null);
+    setActiveTab('live');
+  }, []);
+
+  const handleRefreshOsmCourse = useCallback(async () => {
+    if (!round.course) return;
+    setIsLoadingGeometry(true);
+    setGeometryError(null);
+    try {
+      const geometry = await fetchCourseGolfGeometry(round.course, true);
+      setCourseGeometry(geometry);
+      const summary = summarizeOsmGeometry(geometry);
+      const populatedHoles = applyOsmGeometryToHoles(geometry);
+      setRound((prev) => {
+        const mergedHoles: Record<number, HolePinData> = {};
+        for (let i = 1; i <= 18; i += 1) {
+          const existing = prev.holes[i];
+          const fresh = populatedHoles[i];
+          mergedHoles[i] = {
+            ...fresh,
+            hazards: existing?.hazards ?? [],
+            greenFrontLatLng: existing?.greenFrontLatLng,
+            greenBackLatLng: existing?.greenBackLatLng,
+            teeLatLng: existing?.teeLatLng ?? fresh.teeLatLng,
+            greenCenterLatLng: existing?.greenCenterLatLng ?? fresh.greenCenterLatLng,
+            greenPolygon: fresh.greenPolygon ?? existing?.greenPolygon,
+          };
+        }
+        return {
+          ...prev,
+          course: prev.course ? { ...prev.course, osmSummary: summary } : prev.course,
+          holes: mergedHoles,
+          updatedAt: Date.now(),
+        };
+      });
+    } catch {
+      setGeometryError('Overpass sync failed');
+    } finally {
+      setIsLoadingGeometry(false);
+    }
+  }, [round.course]);
+
+  const handleResetRound = useCallback(() => {
+    const hasData = Object.values(round.scores).some(
+      (s) => s.shots.length > 0 || s.manualPutts > 0 || s.manualScoreOverride !== undefined
+    );
+    if (hasData) {
+      setSavedRounds((prev) => [round, ...prev.filter((r) => r.id !== round.id)].slice(0, 20));
+    }
+    setRound(createInitialRoundState(round.course));
+    setPendingStartLatLng(null);
+    setTargetPin(null);
+    setActiveTab('live');
+  }, [round]);
+
+  const navItems: Array<{ id: AppViewTab; label: string; icon: React.ReactNode }> = [
+    { id: 'live', label: 'Live Hole', icon: <Flag className="w-5 h-5" /> },
+    { id: 'scorecard', label: 'Scorecard', icon: <ClipboardList className="w-5 h-5" /> },
+    { id: 'stats', label: 'Shot Stats', icon: <BarChart3 className="w-5 h-5" /> },
+    { id: 'bag', label: 'Bag & NFC', icon: <Nfc className="w-5 h-5" /> },
+  ];
+
+  return (
+    <div className="h-full flex flex-col bg-[#F5F7F5]">
+      {/* Top Bar Contract: Zone 1 (Wordmark) — Zone 2 (4 Nav Links) — Zone 3 (1 Primary CTA) */}
+      <header className="h-[52px] md:h-14 px-4 sm:px-6 bg-white border-b border-slate-200 flex items-center justify-between gap-8 shrink-0 z-30">
+        <button
+          type="button"
+          onClick={() => setActiveTab('live')}
+          className="font-display text-lg font-bold tracking-tight text-[#0F1A14] whitespace-nowrap shrink-0 text-left"
+        >
+          CaddieLine
+        </button>
+
+        <nav className="hidden md:flex items-center gap-6" aria-label="Primary navigation">
+          {navItems.map((item) => {
+            const active = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveTab(item.id)}
+                className={`text-sm font-medium whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
+                  active
+                    ? 'text-[#0F1A14] border-emerald-700 font-semibold'
+                    : 'text-slate-600 border-transparent hover:text-[#0F1A14] hover:border-slate-300'
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsCourseModalOpen(true)}
+            className="h-9 px-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors max-w-[185px]"
+          >
+            <Search className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{round.course ? round.course.name : 'Find Course'}</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Workspace */}
+      <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
+        {activeTab === 'live' && (
+          <div className="h-full flex flex-col lg:grid lg:grid-cols-[1fr_430px] pb-16 md:pb-0">
+            <div className="h-[44vh] min-h-[320px] lg:h-full lg:min-h-0 relative isolate z-0">
+              <OpenGolfHoleMap
+                course={round.course}
+                courseGeometry={courseGeometry}
+                isLoadingGeometry={isLoadingGeometry}
+                geometryError={geometryError}
+                holeData={currentHoleData}
+                allHoles={round.holes}
+                allScores={round.scores}
+                shots={currentHoleScore.shots}
+                unit={round.unit}
+                bag={bag}
+                playerPosition={geo.position}
+                gpsStatus={geo.status}
+                gpsAccuracyMeters={geo.accuracyMeters}
+                isManualPosition={geo.isManualOverride}
+                tapMode={tapMode}
+                targetPin={targetPin}
+                onSelectHole={handleChangeHole}
+                onChangeTapMode={setTapMode}
+                onSetTargetPin={setTargetPin}
+                onSetManualPlayerPos={geo.setManualPosition}
+                onResumeLiveGps={geo.resumeLiveGps}
+                onUpdateHolePins={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
+                onQuickLogFromMap={handleQuickLogFromMap}
+                onOpenCourseSearch={() => setIsCourseModalOpen(true)}
+                onRefreshOsmCourse={() => void handleRefreshOsmCourse()}
+              />
+            </div>
+
+            <div className="lg:h-full lg:min-h-0 lg:overflow-hidden">
+              <ShotLoggerPanel
+                holeData={currentHoleData}
+                allHoles={round.holes}
+                allScores={round.scores}
+                holeScore={currentHoleScore}
+                totalScoreRelativeToPar={roundTotals.relativeToPar}
+                holesPlayedCount={roundTotals.playedCount}
+                bag={bag}
+                unit={round.unit}
+                selectedClubId={selectedClubId}
+                selectedLie={selectedLie}
+                selectedDirection={selectedDirection}
+                manualDistanceYards={manualDistanceYards}
+                autoDetectedDistanceYards={autoDetectedDistanceYards}
+                nfcStatus={nfc.status}
+                nfcSupported={nfc.isSupported}
+                lastNfcFeedback={lastNfcFeedback}
+                onSelectHole={handleChangeHole}
+                onSelectClub={setSelectedClubId}
+                onSelectLie={handleSelectLie}
+                onSelectDirection={setSelectedDirection}
+                onChangeManualDistance={setManualDistanceYards}
+                onLogShot={handleLogShotManual}
+                onDeleteShot={handleDeleteShot}
+                onUndoLastShot={handleUndoLastShot}
+                onUpdatePutts={handleUpdatePutts}
+                onUpdateHoleMeta={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
+                onPrevHole={() => handleChangeHole(round.currentHole - 1)}
+                onNextHole={() => handleChangeHole(round.currentHole + 1)}
+                onToggleNfcScan={() => {
+                  if (nfc.status === 'scanning') nfc.stopScan();
+                  else void nfc.startScan();
+                }}
+                onOpenBagNfc={() => setActiveTab('bag')}
+              />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'scorecard' && (
+          <div className="h-full overflow-y-auto">
+            <ScorecardView
+              round={round}
+              onSelectHole={(num) => {
+                handleChangeHole(num);
+                setActiveTab('live');
+              }}
+              onUpdateHoleMeta={handleUpdateHoleMeta}
+              onOverrideHoleScore={handleOverrideHoleScore}
+              onResetRound={handleResetRound}
+            />
+          </div>
+        )}
+
+        {activeTab === 'stats' && (
+          <div className="h-full overflow-y-auto">
+            <StatsView
+              round={round}
+              savedRounds={savedRounds}
+              onLoadRound={(loaded) => {
+                setRound(loaded);
+                setActiveTab('live');
+              }}
+              onDeleteSavedRound={(id) =>
+                setSavedRounds((prev) => prev.filter((item) => item.id !== id))
+              }
+            />
+          </div>
+        )}
+
+        {activeTab === 'bag' && (
+          <div className="h-full overflow-y-auto">
+            <BagNfcView
+              bag={bag}
+              unit={round.unit}
+              nfcSupported={nfc.isSupported}
+              nfcStatus={nfc.status}
+              nfcError={nfc.errorMessage}
+              lastNfcTap={nfc.lastTap}
+              pairingClubId={pairingClubId}
+              autoLogOnNfc={autoLogOnNfc}
+              onChangeUnit={(unit) => setRound((prev) => ({ ...prev, unit }))}
+              onToggleAutoLogOnNfc={setAutoLogOnNfc}
+              onStartNfcScan={() => void nfc.startScan()}
+              onStopNfcScan={nfc.stopScan}
+              onStartPairingClub={setPairingClubId}
+              onUpdateClub={(clubId, patch) =>
+                setBag((prev) => prev.map((c) => (c.id === clubId ? { ...c, ...patch } : c)))
+              }
+              onAddClub={(club) => setBag((prev) => [...prev, club])}
+              onDeleteClub={(clubId) => setBag((prev) => prev.filter((c) => c.id !== clubId))}
+              onSimulateTagTap={(tagId) => {
+                nfc.simulateTap(tagId);
+              }}
+            />
+          </div>
+        )}
+      </main>
+
+      {/* Mobile Fixed Bottom Thumb Navigation Bar (56px height -> total sticky <= 13% of mobile viewport) */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-4 items-center"
+        aria-label="Mobile navigation"
+      >
+        {navItems.map((item) => {
+          const active = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveTab(item.id)}
+              className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                active ? 'text-emerald-700 font-semibold' : 'text-slate-500'
+              }`}
+            >
+              {item.icon}
+              <span className="text-[10px] tracking-tight whitespace-nowrap">{item.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Course Search Modal */}
+      <CourseSearchModal
+        isOpen={isCourseModalOpen}
+        onClose={() => setIsCourseModalOpen(false)}
+        userPosition={geo.position}
+        currentCourse={round.course}
+        onSelectCourse={handleSelectCourse}
+      />
+
+      <OfflineIndicator />
+    </div>
+  );
+}

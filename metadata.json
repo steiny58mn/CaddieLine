@@ -1,0 +1,6 @@
+{
+  "name": "CaddieLine",
+  "description": "Real-time golf shot tracker, satellite course yardage map, automatic scorecard, and Web NFC GolfPad sensor integration.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
