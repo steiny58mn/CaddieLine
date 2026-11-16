@@ -42,6 +42,7 @@ interface ShotLoggerPanelProps {
   allScores: Record<number, HoleScoreState>;
   holeScore: HoleScoreState;
   previousShot: ShotRecord | null;
+  subCourseName?: string;
   bag: Club[];
   unit: DistanceUnit;
   selectedClubId: string;
@@ -212,6 +213,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   allScores,
   holeScore,
   previousShot,
+  subCourseName,
   bag,
   unit,
   selectedClubId,
@@ -290,6 +292,36 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               <span className="text-xs font-mono text-slate-500 tabular-nums">
                 {formatDistanceValue(holeData.yardage, unit)} {suffix}
               </span>
+              {(() => {
+                if (!subCourseName) return null;
+                if (subCourseName.includes('/')) {
+                  const [frontRaw, backRaw] = subCourseName.split('/').map((s) => s.trim());
+                  const isBack = holeData.holeNumber > 9;
+                  const loopLabel = isBack ? backRaw : frontRaw;
+                  const localHole = isBack ? holeData.holeNumber - 9 : holeData.holeNumber;
+                  if (!loopLabel) return null;
+                  return (
+                    <>
+                      <span className="text-slate-300" aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="text-xs font-semibold text-emerald-800 whitespace-nowrap">
+                        {loopLabel} #{localHole}
+                      </span>
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <span className="text-slate-300" aria-hidden="true">
+                      ·
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-800 whitespace-nowrap">
+                      {subCourseName}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
             <div className="text-xs text-slate-500 mt-0.5 tabular-nums truncate">
               Hole: <strong className="text-[#0F1A14]">{holeStrokes || '—'}</strong>{' '}

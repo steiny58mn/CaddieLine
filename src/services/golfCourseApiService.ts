@@ -14,9 +14,49 @@ interface CachedMatchEntry {
   matches: GolfCourseDetail[];
 }
 
+export interface GolfCourseApiStatusDebug {
+  configured: boolean;
+  openGolfApi?: boolean;
+  golfCourseApi?: boolean;
+  envVarName: string | null;
+  keyLength: number;
+  maskedKey: string | null;
+  lastCheckedAt: number | null;
+  lastQuery: string | null;
+  upstreamStatus: number | null;
+  upstreamError: string | null;
+  lastResultCount: number | null;
+}
+
 export interface GolfCourseMatchResult {
   configured: boolean;
+  openGolfApi?: boolean;
+  envVarName?: string | null;
+  keyLength?: number;
+  maskedKey?: string | null;
+  upstreamStatus?: number | null;
+  upstreamError?: string | null;
   matches: GolfCourseDetail[];
+}
+
+export async function fetchGolfCourseApiStatus(
+  verify = false,
+  probeQuery?: string
+): Promise<GolfCourseApiStatusDebug | null> {
+  try {
+    const params = new URLSearchParams();
+    if (verify) params.set('verify', '1');
+    if (probeQuery) params.set('q', probeQuery);
+    const qs = params.toString();
+    const res = await fetch(`/api/golfcourse/status${qs ? `?${qs}` : ''}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as GolfCourseApiStatusDebug;
+    console.info('[GolfCourseAPI Status Debug]', data);
+    return data;
+  } catch (err) {
+    console.warn('[GolfCourseAPI Status Debug] Failed to reach /api/golfcourse/status:', err);
+    return null;
+  }
 }
 
 function normalizeText(value: string): string {
@@ -72,16 +112,27 @@ export async function fetchGolfCourseMatch(course: CourseInfo): Promise<GolfCour
       }),
     });
     if (res.ok) {
-      const data = (await res.json()) as {
-        configured?: boolean;
-        matches?: GolfCourseDetail[];
-      };
-      const configured = Boolean(data.configured ?? true);
+      const data = (await res.json()) as GolfCourseMatchResult;
+      const configured = Boolean(data.configured);
       const matches = Array.isArray(data.matches) ? data.matches : [];
+      console.info('[GolfCourseAPI Match Debug]', {
+        course: course.name,
+        configured,
+        envVarName: data.envVarName,
+        keyLength: data.keyLength,
+        maskedKey: data.maskedKey,
+        upstreamStatus: data.upstreamStatus,
+        upstreamError: data.upstreamError,
+        matchesCount: matches.length,
+      });
       if (matches.length > 0) {
         writeCachedMatch(baseKey, matches);
       }
-      return { configured, matches };
+      return {
+        ...data,
+        configured,
+        matches,
+      };
     }
   } catch (err) {
     console.warn('Backend /api/golfcourse/match failed, trying direct OpenGolfAPI:', err);

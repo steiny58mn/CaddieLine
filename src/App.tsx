@@ -1380,6 +1380,7 @@ export default function App() {
                 allScores={round.scores}
                 holeScore={currentHoleScore}
                 previousShot={previousShot}
+                subCourseName={round.course?.subCourseName}
                 bag={bag}
                 unit={round.unit}
                 selectedClubId={selectedClubId}
