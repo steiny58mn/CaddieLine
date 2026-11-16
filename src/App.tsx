@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BarChart3, ClipboardList, Flag, Nfc, Search } from 'lucide-react';
+import { BarChart3, ClipboardList, Map as MapIcon, Nfc, Search } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -55,7 +55,8 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<AppViewTab>('live');
+  const [activeTab, setActiveTab] = useState<AppViewTab>('stats');
+  const [statsSubTab, setStatsSubTab] = useState<'entry' | 'analytics'>('entry');
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
 
   const [round, setRound] = useState<RoundState>(() =>
@@ -543,7 +544,6 @@ export default function App() {
     }));
     setPendingStartLatLng(null);
     setTargetPin(null);
-    setActiveTab('live');
   }, []);
 
   const handleRefreshOsmCourse = useCallback(async () => {
@@ -594,13 +594,14 @@ export default function App() {
     setRound(createInitialRoundState(round.course));
     setPendingStartLatLng(null);
     setTargetPin(null);
-    setActiveTab('live');
+    setStatsSubTab('entry');
+    setActiveTab('stats');
   }, [round]);
 
   const navItems: Array<{ id: AppViewTab; label: string; icon: React.ReactNode }> = [
-    { id: 'live', label: 'Live Hole', icon: <Flag className="w-5 h-5" /> },
+    { id: 'stats', label: 'Stats', icon: <BarChart3 className="w-5 h-5" /> },
+    { id: 'map', label: 'Map', icon: <MapIcon className="w-5 h-5" /> },
     { id: 'scorecard', label: 'Scorecard', icon: <ClipboardList className="w-5 h-5" /> },
-    { id: 'stats', label: 'Shot Stats', icon: <BarChart3 className="w-5 h-5" /> },
     { id: 'bag', label: 'Bag & NFC', icon: <Nfc className="w-5 h-5" /> },
   ];
 
@@ -610,7 +611,7 @@ export default function App() {
       <header className="h-[52px] md:h-14 px-4 sm:px-6 bg-white border-b border-slate-200 flex items-center justify-between gap-8 shrink-0 z-30">
         <button
           type="button"
-          onClick={() => setActiveTab('live')}
+          onClick={() => setActiveTab('stats')}
           className="font-display text-lg font-bold tracking-tight text-[#0F1A14] whitespace-nowrap shrink-0 text-left"
         >
           CaddieLine
@@ -650,39 +651,42 @@ export default function App() {
 
       {/* Main Workspace */}
       <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
-        {activeTab === 'live' && (
-          <div className="h-full flex flex-col lg:grid lg:grid-cols-[1fr_430px] pb-16 md:pb-0">
-            <div className="h-[44vh] min-h-[320px] lg:h-full lg:min-h-0 relative isolate z-0">
-              <OpenGolfHoleMap
-                course={round.course}
-                courseGeometry={courseGeometry}
-                isLoadingGeometry={isLoadingGeometry}
-                geometryError={geometryError}
-                holeData={currentHoleData}
-                allHoles={round.holes}
-                allScores={round.scores}
-                shots={currentHoleScore.shots}
-                unit={round.unit}
-                bag={bag}
-                playerPosition={geo.position}
-                gpsStatus={geo.status}
-                gpsAccuracyMeters={geo.accuracyMeters}
-                isManualPosition={geo.isManualOverride}
-                tapMode={tapMode}
-                targetPin={targetPin}
-                onSelectHole={handleChangeHole}
-                onChangeTapMode={setTapMode}
-                onSetTargetPin={setTargetPin}
-                onSetManualPlayerPos={geo.setManualPosition}
-                onResumeLiveGps={geo.resumeLiveGps}
-                onUpdateHolePins={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
-                onQuickLogFromMap={handleQuickLogFromMap}
-                onOpenCourseSearch={() => setIsCourseModalOpen(true)}
-                onRefreshOsmCourse={() => void handleRefreshOsmCourse()}
-              />
+        {activeTab === 'stats' && (
+          <div className="h-full flex flex-col lg:grid lg:grid-cols-[440px_1fr] pb-14 md:pb-0">
+            {/* Mobile Sub-Switcher: Enter Hole Stats vs Round Analytics */}
+            <div className="lg:hidden px-3 py-2 bg-white border-b border-slate-200 shrink-0">
+              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setStatsSubTab('entry')}
+                  className={`min-h-[40px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                    statsSubTab === 'entry'
+                      ? 'bg-white text-[#0F1A14] shadow-xs'
+                      : 'text-slate-600 hover:text-[#0F1A14]'
+                  }`}
+                >
+                  Enter Hole Stats
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatsSubTab('analytics')}
+                  className={`min-h-[40px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                    statsSubTab === 'analytics'
+                      ? 'bg-white text-[#0F1A14] shadow-xs'
+                      : 'text-slate-600 hover:text-[#0F1A14]'
+                  }`}
+                >
+                  Round Analytics
+                </button>
+              </div>
             </div>
 
-            <div className="lg:h-full lg:min-h-0 lg:overflow-hidden">
+            {/* Left Column (Desktop) / Entry Tab (Mobile): Hole & Shot Stat Entry */}
+            <div
+              className={`${
+                statsSubTab === 'entry' ? 'flex-1 min-h-0' : 'hidden'
+              } lg:block lg:h-full lg:min-h-0 lg:overflow-hidden`}
+            >
               <ShotLoggerPanel
                 holeData={currentHoleData}
                 allHoles={round.holes}
@@ -717,8 +721,65 @@ export default function App() {
                   else void nfc.startScan();
                 }}
                 onOpenBagNfc={() => setActiveTab('bag')}
+                onFlipToMap={() => setActiveTab('map')}
               />
             </div>
+
+            {/* Right Column (Desktop) / Analytics Tab (Mobile): Shot Dispersion & Club Analytics */}
+            <div
+              className={`${
+                statsSubTab === 'analytics' ? 'flex-1 overflow-y-auto' : 'hidden'
+              } lg:block lg:h-full lg:overflow-y-auto`}
+            >
+              <StatsView
+                round={round}
+                savedRounds={savedRounds}
+                onLoadRound={(loaded) => {
+                  setRound(loaded);
+                  setStatsSubTab('entry');
+                  setActiveTab('stats');
+                }}
+                onDeleteSavedRound={(id) =>
+                  setSavedRounds((prev) => prev.filter((item) => item.id !== id))
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'map' && (
+          <div className="h-full relative isolate z-0 pb-14 md:pb-0">
+            <OpenGolfHoleMap
+              course={round.course}
+              courseGeometry={courseGeometry}
+              isLoadingGeometry={isLoadingGeometry}
+              geometryError={geometryError}
+              holeData={currentHoleData}
+              allHoles={round.holes}
+              allScores={round.scores}
+              shots={currentHoleScore.shots}
+              unit={round.unit}
+              bag={bag}
+              playerPosition={geo.position}
+              gpsStatus={geo.status}
+              gpsAccuracyMeters={geo.accuracyMeters}
+              isManualPosition={geo.isManualOverride}
+              tapMode={tapMode}
+              targetPin={targetPin}
+              onSelectHole={handleChangeHole}
+              onChangeTapMode={setTapMode}
+              onSetTargetPin={setTargetPin}
+              onSetManualPlayerPos={geo.setManualPosition}
+              onResumeLiveGps={geo.resumeLiveGps}
+              onUpdateHolePins={(patch) => handleUpdateHoleMeta(round.currentHole, patch)}
+              onQuickLogFromMap={handleQuickLogFromMap}
+              onOpenCourseSearch={() => setIsCourseModalOpen(true)}
+              onRefreshOsmCourse={() => void handleRefreshOsmCourse()}
+              onFlipToStats={() => {
+                setStatsSubTab('entry');
+                setActiveTab('stats');
+              }}
+            />
           </div>
         )}
 
@@ -728,27 +789,12 @@ export default function App() {
               round={round}
               onSelectHole={(num) => {
                 handleChangeHole(num);
-                setActiveTab('live');
+                setStatsSubTab('entry');
+                setActiveTab('stats');
               }}
               onUpdateHoleMeta={handleUpdateHoleMeta}
               onOverrideHoleScore={handleOverrideHoleScore}
               onResetRound={handleResetRound}
-            />
-          </div>
-        )}
-
-        {activeTab === 'stats' && (
-          <div className="h-full overflow-y-auto">
-            <StatsView
-              round={round}
-              savedRounds={savedRounds}
-              onLoadRound={(loaded) => {
-                setRound(loaded);
-                setActiveTab('live');
-              }}
-              onDeleteSavedRound={(id) =>
-                setSavedRounds((prev) => prev.filter((item) => item.id !== id))
-              }
             />
           </div>
         )}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
+  BarChart3,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -74,6 +75,7 @@ interface OpenGolfHoleMapProps {
   ) => void;
   onOpenCourseSearch: () => void;
   onRefreshOsmCourse: () => void;
+  onFlipToStats?: () => void;
 }
 
 interface ComputedHazardDistance {
@@ -129,6 +131,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   onQuickLogFromMap,
   onOpenCourseSearch,
   onRefreshOsmCourse,
+  onFlipToStats,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -1281,6 +1284,18 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
 
       {/* Top-Right Quick Map Controls */}
       <div className="absolute top-3 right-3 z-[400] flex flex-col gap-2">
+        {onFlipToStats && (
+          <button
+            type="button"
+            onClick={onFlipToStats}
+            className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-400/40 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors whitespace-nowrap"
+            title="Flip to Stats & Shot Entry"
+          >
+            <BarChart3 className="w-4 h-4 shrink-0" />
+            <span>Stats</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => setBaseLayer((prev) => (prev === 'satellite' ? 'osm' : 'satellite'))}

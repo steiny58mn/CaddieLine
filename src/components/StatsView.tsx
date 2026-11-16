@@ -133,7 +133,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
           {totalNonPutt === 0 ? (
             <div className="mt-6 py-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl">
-              Log full shots on the Live Hole view to measure left, on-line, and right tendencies.
+              Log full shots in Hole Stats Entry to measure left, on-line, and right tendencies.
             </div>
           ) : (
             <div className="mt-5 space-y-4">

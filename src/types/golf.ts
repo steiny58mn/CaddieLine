@@ -147,5 +147,5 @@ export type MapTapMode =
   | 'set_green_back'
   | 'add_hazard';
 
-export type AppViewTab = 'live' | 'scorecard' | 'stats' | 'bag';
+export type AppViewTab = 'stats' | 'map' | 'scorecard' | 'bag';
 

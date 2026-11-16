@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
+  Map as MapIcon,
   Minus,
   Nfc,
   Plus,
@@ -69,6 +70,7 @@ interface ShotLoggerPanelProps {
   onNextHole: () => void;
   onToggleNfcScan: () => void;
   onOpenBagNfc: () => void;
+  onFlipToMap?: () => void;
 }
 
 export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
@@ -102,6 +104,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onNextHole,
   onToggleNfcScan,
   onOpenBagNfc,
+  onFlipToMap,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
   const holeStrokes = getHoleStrokes(holeScore);
@@ -112,9 +115,9 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const { isInstalled } = usePWAInstall();
 
   return (
-    <div className="flex flex-col h-full bg-white border-t lg:border-t-0 lg:border-l border-slate-200">
+    <div className="flex flex-col h-full bg-white lg:border-r border-slate-200">
       {/* Hole Navigation & Live Score Header */}
-      <div className="relative px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3 bg-[#FAFBFA]">
+      <div className="relative shrink-0 px-3 sm:px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-2 bg-[#FAFBFA]">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -193,20 +196,34 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </button>
         </div>
 
-        {/* Web NFC Quick Toggle */}
-        <button
-          type="button"
-          onClick={nfcSupported ? onToggleNfcScan : onOpenBagNfc}
-          className={`min-h-[44px] px-3 rounded-xl border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-            nfcStatus === 'scanning'
-              ? 'bg-emerald-700 text-white border-emerald-700'
-              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-          }`}
-          title="GolfPad NFC Sensor Scanner"
-        >
-          <Nfc className="w-4 h-4" />
-          <span>{nfcStatus === 'scanning' ? 'NFC Active' : 'NFC Tap'}</span>
-        </button>
+        {/* Quick Actions: Flip to Map & Web NFC */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={nfcSupported ? onToggleNfcScan : onOpenBagNfc}
+            className={`min-h-[44px] px-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
+              nfcStatus === 'scanning'
+                ? 'bg-emerald-700 text-white border-emerald-700'
+                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+            }`}
+            title="GolfPad NFC Sensor Scanner"
+          >
+            <Nfc className="w-4 h-4" />
+            <span className="hidden sm:inline">{nfcStatus === 'scanning' ? 'NFC Active' : 'NFC'}</span>
+          </button>
+
+          {onFlipToMap && (
+            <button
+              type="button"
+              onClick={onFlipToMap}
+              className="min-h-[44px] px-3 rounded-xl bg-[#0F1A14] hover:bg-emerald-900 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+              title="Flip to Course GPS Map"
+            >
+              <MapIcon className="w-4 h-4 text-emerald-400" />
+              <span>Map</span>
+            </button>
+          )}
+        </div>
 
         {isHolePickerOpen && (
           <div className="absolute left-3 right-3 top-full mt-1.5 z-30 rounded-2xl bg-white border border-slate-200 shadow-xl p-3">
@@ -484,7 +501,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           {holeScore.shots.length === 0 ? (
             <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-3.5 text-xs text-slate-500">
               No shots logged on Hole {holeData.holeNumber} yet. Choose a club and where the shot
-              went, tap a GolfPad NFC tag, or tap &ldquo;Tap Shot End&rdquo; on the map.
+              went, tap a GolfPad NFC tag, or flip to the Map to tap a shot landing spot.
             </div>
           ) : (
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">

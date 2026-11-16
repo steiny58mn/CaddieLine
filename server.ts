@@ -581,6 +581,7 @@ out center 35;
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
+        allowedHosts: true,
         hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
         ws: { server: httpServer },
         watch: process.env.DISABLE_HMR === 'true' ? null : {},
