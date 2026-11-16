@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Compass, Loader2, MapPin, Nfc, Search, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Compass, Loader2, MapPin, Search, Trash2 } from 'lucide-react';
 import {
   CourseInfo,
   GolfCourseDetail,
@@ -42,11 +42,11 @@ interface PendingLoopOption {
 interface CourseLandingViewProps {
   userPosition: LatLngLiteral | null;
   savedRounds: RoundState[];
-  pairedClubsCount: number;
+  pairedClubsCount?: number;
   onSelectCourse: (course: CourseInfo, geometry: OsmCourseGeometry) => void;
   onLoadSavedRound: (round: RoundState) => void;
   onDeleteSavedRound: (roundId: string) => void;
-  onOpenBagNfc: () => void;
+  onOpenBagNfc?: () => void;
 }
 
 function normalizeLoopCompare(name: string): string {
@@ -76,15 +76,13 @@ function findExactOrCloseGcaMatch(
 export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   userPosition,
   savedRounds,
-  pairedClubsCount,
   onSelectCourse,
   onLoadSavedRound,
   onDeleteSavedRound,
-  onOpenBagNfc,
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CourseInfo[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [isSearching, setIsSearching] = useState(true);
   const [loadingCourseId, setLoadingCourseId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
@@ -96,14 +94,17 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   const [comboFrontId, setComboFrontId] = useState<string>('');
   const [comboBackId, setComboBackId] = useState<string>('');
 
-  const handleNearbySearch = useCallback(async () => {
-    if (!userPosition) return;
+  const hasAutoSearchedRef = useRef(false);
+  const lastSearchedPosRef = useRef<LatLngLiteral | null>(null);
+
+  const handleNearbySearch = useCallback(async (pos?: LatLngLiteral | null) => {
+    const targetPos = pos !== undefined ? pos : userPosition;
     setIsSearching(true);
     setErrorMessage(null);
     setHasSearched(true);
 
     try {
-      const courses = await findNearbyCoursesOsm(userPosition, 45000);
+      const courses = await findNearbyCoursesOsm(targetPos, 45000);
       setResults(courses);
     } catch {
       setErrorMessage('Could not reach nearby course directories. Try searching by name above.');
@@ -115,7 +116,10 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   const runTextSearch = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed) return;
+      if (!trimmed) {
+        void handleNearbySearch(userPosition);
+        return;
+      }
       setIsSearching(true);
       setErrorMessage(null);
       setHasSearched(true);
@@ -130,7 +134,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
         setIsSearching(false);
       }
     },
-    [userPosition]
+    [userPosition, handleNearbySearch]
   );
 
   const handleTextSearch = useCallback(
@@ -236,8 +240,6 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
 
         const gcaMatches =
           gcaResult.status === 'fulfilled' ? gcaResult.value.matches : [];
-
-
 
         const geometry: OsmCourseGeometry =
           geomResult.status === 'fulfilled'
@@ -379,11 +381,23 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
     [onSelectCourse]
   );
 
+  // Automatically fetch nearest courses on initial render or when GPS position updates
   useEffect(() => {
-    if (userPosition && !hasSearched && results.length === 0) {
-      void handleNearbySearch();
+    if (!hasAutoSearchedRef.current) {
+      hasAutoSearchedRef.current = true;
+      lastSearchedPosRef.current = userPosition;
+      void handleNearbySearch(userPosition);
+    } else if (
+      userPosition &&
+      (!lastSearchedPosRef.current ||
+        computeDistanceMeters(userPosition, lastSearchedPosRef.current) > 2000)
+    ) {
+      if (!query.trim()) {
+        lastSearchedPosRef.current = userPosition;
+        void handleNearbySearch(userPosition);
+      }
     }
-  }, [userPosition, hasSearched, results.length, handleNearbySearch]);
+  }, [userPosition, query, handleNearbySearch]);
 
   const sortedResults = useMemo(() => {
     const nonDisc = results.filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress));
@@ -394,6 +408,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
         computeDistanceMeters(userPosition, b.location)
     );
   }, [results, userPosition]);
+
+  // When not searching text, automatically display the nearest 10 courses
+  const displayedCourses = useMemo(() => {
+    if (query.trim()) {
+      return sortedResults;
+    }
+    return sortedResults.slice(0, 10);
+  }, [query, sortedResults]);
 
   return (
     <div className="h-full overflow-y-auto">
@@ -431,31 +453,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
-              {userPosition ? (
-                <button
-                  type="button"
-                  onClick={() => void handleNearbySearch()}
-                  disabled={isSearching}
-                  className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800 min-h-[36px] px-2 -ml-2 rounded-lg hover:bg-emerald-50 transition-colors whitespace-nowrap"
-                >
-                  <Compass className="w-4 h-4" />
-                  <span>Refresh Nearby Courses</span>
-                </button>
-              ) : (
-                <span className="text-xs text-slate-400">
-                  Enable GPS to automatically list closest courses first
-                </span>
-              )}
-
               <button
                 type="button"
-                onClick={onOpenBagNfc}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-[#0F1A14] min-h-[36px] px-2 rounded-lg hover:bg-slate-100 transition-colors whitespace-nowrap"
+                onClick={() => void handleNearbySearch()}
+                disabled={isSearching}
+                className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800 min-h-[36px] px-2 -ml-2 rounded-lg hover:bg-emerald-50 disabled:opacity-50 transition-colors whitespace-nowrap"
               >
-                <Nfc className="w-3.5 h-3.5 text-emerald-700" />
-                <span>
-                  {pairedClubsCount > 0 ? `Bag & NFC (${pairedClubsCount})` : 'Pair Club Tags'}
-                </span>
+                <Compass className="w-4 h-4" />
+                <span>{userPosition ? 'Refresh Nearest Courses' : 'Refresh Nearby Courses'}</span>
               </button>
             </div>
           </form>
@@ -464,38 +469,43 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             {errorMessage && (
               <div className="p-4 m-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
                 <span>{errorMessage}</span>
-                {userPosition && (
-                  <button
-                    type="button"
-                    onClick={() => void handleNearbySearch()}
-                    className="px-3 py-1.5 rounded-lg bg-amber-900 text-white font-semibold whitespace-nowrap shrink-0 hover:bg-amber-950 transition-colors"
-                  >
-                    Retry
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => void handleNearbySearch()}
+                  className="px-3 py-1.5 rounded-lg bg-amber-900 text-white font-semibold whitespace-nowrap shrink-0 hover:bg-amber-950 transition-colors"
+                >
+                  Retry
+                </button>
               </div>
             )}
 
             {isSearching && (
               <div className="p-10 flex items-center justify-center gap-2.5 text-sm text-slate-500">
                 <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
-                <span>Finding golf courses...</span>
+                <span>{query.trim() ? 'Searching golf courses...' : 'Finding nearest golf courses...'}</span>
               </div>
             )}
 
-            {!isSearching && hasSearched && sortedResults.length === 0 && !errorMessage && (
+            {!isSearching && hasSearched && displayedCourses.length === 0 && !errorMessage && (
               <div className="p-8 text-center text-sm text-slate-500">
-                No golf courses matched your search. Try adding a city or state name.
+                {query.trim()
+                  ? 'No golf courses matched your search. Try adding a city or state name.'
+                  : 'No golf courses found nearby. Try searching by course name or city above.'}
               </div>
             )}
 
-            {!isSearching && !hasSearched && sortedResults.length === 0 && (
-              <div className="p-8 text-center text-xs text-slate-500">
-                <p>Search for any golf course name, city, or club above to begin your round.</p>
+            {!isSearching && displayedCourses.length > 0 && (
+              <div className="px-5 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
+                <span>{query.trim() ? `Search Results for "${query.trim()}"` : 'Nearest Golf Courses'}</span>
+                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+                  {query.trim()
+                    ? `${displayedCourses.length} ${displayedCourses.length === 1 ? 'course' : 'courses'}`
+                    : `Top ${displayedCourses.length}`}
+                </span>
               </div>
             )}
 
-            {sortedResults.map((course) => {
+            {displayedCourses.map((course) => {
               const isLoadingThis = loadingCourseId === course.placeId;
               const isMultiExpanded = pendingMultiCourse?.course.placeId === course.placeId;
               const loopOptions = isMultiExpanded ? pendingMultiCourse.loops : [];
