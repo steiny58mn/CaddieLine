@@ -1539,21 +1539,34 @@ export default function App() {
 
         {/* Right Tools & Status Strip */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0">
-          {/* Live GPS Status Indicator */}
-          {geo.position && (
-            <div
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/70 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums shadow-2xs"
-              title={`GPS Accuracy: ±${geo.accuracyMeters ? Math.round(geo.accuracyMeters * 3.28084) : '?'} ft`}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>GPS</span>
-              {geo.accuracyMeters && (
-                <span className="text-slate-400 font-semibold">
-                  ±{Math.round(geo.accuracyMeters * 3.28084)}ft
-                </span>
-              )}
-            </div>
-          )}
+          {/* Live GPS Accuracy Status Pill (always next to GPS Tape Measure) */}
+          <div
+            className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/70 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums shadow-2xs shrink-0"
+            title={
+              geo.position
+                ? `GPS Accuracy: ±${geo.accuracyMeters ? Math.round(geo.accuracyMeters * 3.28084) : '?'} ft`
+                : geo.errorMessage
+                  ? geo.errorMessage
+                  : 'Acquiring GPS location...'
+            }
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                geo.position
+                  ? 'bg-emerald-500 animate-pulse'
+                  : geo.errorMessage
+                    ? 'bg-rose-500'
+                    : 'bg-amber-400 animate-pulse'
+              }`}
+            />
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 dark:text-slate-200">
+              {geo.position && geo.accuracyMeters
+                ? `±${Math.round(geo.accuracyMeters * 3.28084)}ft`
+                : geo.position
+                  ? 'GPS'
+                  : '±--'}
+            </span>
+          </div>
 
           {/* GPS Tape Measure icon button at the very top */}
           <button
