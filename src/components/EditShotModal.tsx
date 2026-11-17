@@ -47,6 +47,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
   const [selectedDirection, setSelectedDirection] = useState<ShotDirection>('straight');
   const [distanceYards, setDistanceYards] = useState<number>(0);
   const [penaltyStrokes, setPenaltyStrokes] = useState<number>(0);
+  const [isPuttOverride, setIsPuttOverride] = useState<boolean | null>(null);
 
   const clubPool = bag && bag.length > 0 ? bag : CLUB_PRESETS;
 
@@ -57,6 +58,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
       setSelectedDirection(shot.direction);
       setDistanceYards(shot.distanceYards ?? 0);
       setPenaltyStrokes(shot.penaltyStrokes ?? 0);
+      setIsPuttOverride(shot.isPuttManualOverride ? (shot.isPutt ?? false) : null);
     }
   }, [shot]);
 
@@ -68,8 +70,17 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
 
   const isCurrentPutter = isPutterClub(currentClub);
 
-  // A putter shot counts as a putt ONLY if the ball was already on the green when hit (previous shot lie === 'green')
-  const willBePutt = isCurrentPutter && (previousShotLie !== undefined ? previousShotLie === 'green' : (shot.isPutt ?? false));
+  // Default rule evaluation:
+  // - Manually added putts (+1 Putt button) are assumed to be putts.
+  // - Scanned putters count as putts ONLY if previous shot landed on the green.
+  // - Other clubs are regular strokes.
+  const defaultIsPutt = shot.source === 'manual' && shot.isPutt
+    ? true
+    : isCurrentPutter
+      ? (previousShotLie !== undefined ? previousShotLie === 'green' : (shot.isPutt ?? false))
+      : false;
+
+  const effectiveIsPutt = isPuttOverride !== null ? isPuttOverride : defaultIsPutt;
 
   const handleLieChange = (lie: ShotLie) => {
     setSelectedLie(lie);
@@ -86,7 +97,8 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
       direction: selectedDirection,
       distanceYards: distanceYards > 0 ? distanceYards : null,
       penaltyStrokes,
-      isPutt: willBePutt,
+      isPutt: effectiveIsPutt,
+      isPuttManualOverride: isPuttOverride !== null ? true : shot.isPuttManualOverride,
     });
     onClose();
   };
@@ -187,31 +199,74 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
               })}
             </div>
 
-            {/* Putt / Stroke Rule Explanation Banner */}
-            <div className="p-3 rounded-2xl text-xs font-semibold flex items-center gap-2 mt-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-              {isCurrentPutter ? (
-                willBePutt ? (
-                  <>
-                    <Check className="w-4 h-4 text-teal-600 shrink-0" />
-                    <span className="text-teal-800 dark:text-teal-300">
-                      Putt on the Green (previous shot landed on green → counted as a putt)
+            {/* Putt Designation & Manual Override Toggle */}
+            <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 space-y-2 mt-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 flex-wrap">
+                    <span>Count as Putt</span>
+                    <span
+                      className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-md ${
+                        effectiveIsPutt
+                          ? 'bg-teal-100 text-teal-800 dark:bg-teal-950/80 dark:text-teal-300 border border-teal-200 dark:border-teal-800'
+                          : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}
+                    >
+                      {effectiveIsPutt ? 'PUTT (+1)' : 'REGULAR STROKE'}
                     </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                    <span className="text-amber-800 dark:text-amber-300">
-                      Off-green putter stroke (Texas wedge — previous lie was {previousShotLie || 'off green'} → counted as a regular stroke, not a putt)
-                    </span>
-                  </>
-                )
-              ) : (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  <span className="text-slate-700 dark:text-slate-300">
-                    Shot with {currentClub.name} landing on {getLieMeta(selectedLie).label} (landing lie is recorded; counted as a regular stroke)
-                  </span>
-                </>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {isPuttOverride !== null ? (
+                      <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                        Manual override active: {effectiveIsPutt ? 'Counted as putt' : 'Counted as stroke'}
+                      </span>
+                    ) : shot.source === 'manual' && shot.isPutt ? (
+                      'Assumed as putt (manually entered putt)'
+                    ) : isCurrentPutter ? (
+                      previousShotLie === 'green'
+                        ? 'Counted as putt (previous shot landed on green)'
+                        : `Texas wedge from ${previousShotLie || 'off green'} (counted as regular stroke)`
+                    ) : (
+                      'Approach stroke (landing on green does not make it a putt)'
+                    )}
+                  </div>
+                </div>
+
+                {/* Manual Override Segmented Buttons */}
+                <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsPuttOverride(false)}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                      !effectiveIsPutt
+                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Stroke
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPuttOverride(true)}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                      effectiveIsPutt
+                        ? 'bg-gradient-to-r from-teal-500 to-cyan-600 text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Putt
+                  </button>
+                </div>
+              </div>
+
+              {isPuttOverride !== null && (
+                <button
+                  type="button"
+                  onClick={() => setIsPuttOverride(null)}
+                  className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
+                >
+                  Reset to automatic rule ({defaultIsPutt ? 'Putt' : 'Regular Stroke'})
+                </button>
               )}
             </div>
           </div>

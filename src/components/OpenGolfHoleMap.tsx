@@ -325,10 +325,23 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     [hazardDistances, selectedHazardId]
   );
 
+  // User physically on the golf course? (Has active GPS fix within range of course)
+  const isPlayerOnCourse = Boolean(playerPosition && !isGpsOffCourse && !isManualPosition);
+
+  // Measurement origin when user taps the map to measure:
+  // "assume I am looking for a distance to the point from where I am. Or, if I am not on the course, from where the tee point is"
+  const measureOrigin: LatLngLiteral | null = useMemo(() => {
+    if (isPlayerOnCourse && playerPosition) return playerPosition;
+    if (isManualPosition && playerPosition) return playerPosition;
+    if (holeData.teeLatLng) return holeData.teeLatLng;
+    if (playerPosition) return playerPosition;
+    return course?.location ?? null;
+  }, [isPlayerOnCourse, playerPosition, isManualPosition, holeData.teeLatLng, course?.location]);
+
   const distToTarget = useMemo(() => {
-    if (!effectiveOrigin || !targetPin) return null;
-    return computeDistanceYards(effectiveOrigin, targetPin);
-  }, [effectiveOrigin, targetPin]);
+    if (!measureOrigin || !targetPin) return null;
+    return computeDistanceYards(measureOrigin, targetPin);
+  }, [measureOrigin, targetPin]);
 
   const distTargetToGreen = useMemo(() => {
     if (!targetPin || !activeGreenCenter) return null;
@@ -359,10 +372,12 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       }
       case 'set_tee':
         onUpdateHolePins({ teeLatLng: clicked });
+        onSetTargetPin(null);
         onChangeTapMode('measure');
         break;
       case 'set_green':
         onUpdateHolePins({ greenCenterLatLng: clicked, greenPolygon: undefined });
+        onSetTargetPin(null);
         onChangeTapMode('measure');
         break;
       case 'set_green_front':
@@ -381,13 +396,13 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
           layup: 'Layup',
         };
         const newHazard: HoleHazardPin = {
-          id: `haz_${Date.now()}`,
+          id: `haz_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           type: hazardType,
           label: labelMap[hazardType],
           latLng: clicked,
         };
+        // Keep add_hazard selected so multiple hazards can be chosen/placed
         onUpdateHolePins({ hazards: [...holeData.hazards, newHazard] });
-        onChangeTapMode('measure');
         break;
       }
     }
@@ -743,32 +758,36 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       }).addTo(layer);
     }
 
-    // Target reticle lines
-    if (effectiveOrigin && targetPin) {
+    // Target reticle lines (when measuring)
+    if (measureOrigin && targetPin) {
+      // Line from player's location (or tee if off-course) to clicked target point
       L.polyline(
         [
-          [effectiveOrigin.lat, effectiveOrigin.lng],
+          [measureOrigin.lat, measureOrigin.lng],
           [targetPin.lat, targetPin.lng],
         ],
-        { color: '#FFFFFF', weight: 2.5, opacity: 0.92 }
+        { color: '#FFFFFF', weight: 2.5, opacity: 0.95 }
       ).addTo(layer);
 
+      // Line from clicked point to green
       if (activeGreenCenter) {
         L.polyline(
           [
             [targetPin.lat, targetPin.lng],
             [activeGreenCenter.lat, activeGreenCenter.lng],
           ],
-          { color: '#FBBF24', weight: 2.5, opacity: 0.92 }
+          { color: '#FBBF24', weight: 2.5, opacity: 0.95 }
         ).addTo(layer);
       }
-    } else if (effectiveOrigin && activeGreenCenter) {
+    } else if (holeData.teeLatLng && activeGreenCenter) {
+      // Direct line from Tee to Green:
+      // "When setting the Tee, don't keep tying it to my physical location. Just have a line from the tee to the green."
       L.polyline(
         [
-          [effectiveOrigin.lat, effectiveOrigin.lng],
+          [holeData.teeLatLng.lat, holeData.teeLatLng.lng],
           [activeGreenCenter.lat, activeGreenCenter.lng],
         ],
-        { color: '#34D399', weight: 2, opacity: 0.85 }
+        { color: '#34D399', weight: 2.2, opacity: 0.85 }
       ).addTo(layer);
     }
 
@@ -790,7 +809,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   }, [
     holeData.teeLatLng,
     shots,
-    effectiveOrigin,
+    measureOrigin,
     targetPin,
     activeGreenCenter,
     selectedHazard,
@@ -931,11 +950,12 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
 
     // 7. Target Reticle
     if (targetPin) {
+      const originPrefix = isPlayerOnCourse ? 'From You' : 'From Tee';
       const label =
         distToTarget !== null
-          ? `${formatDistanceValue(distToTarget, unit)} ${suffix}${
+          ? `${originPrefix}: ${formatDistanceValue(distToTarget, unit)} ${suffix}${
               distTargetToGreen !== null
-                ? ` → ${formatDistanceValue(distTargetToGreen, unit)} ${suffix}`
+                ? ` · ${formatDistanceValue(distTargetToGreen, unit)} to Pin`
                 : ''
             }`
           : 'Target';
@@ -1013,7 +1033,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     set_green: 'Tap the flag / center of the green to pin Hole Green.',
     set_green_front: 'Tap the front edge of the green.',
     set_green_back: 'Tap the back edge of the green.',
-    add_hazard: `Tap on the map to mark a ${hazardType} hazard or layup point.`,
+    add_hazard: `Tap anywhere on the map to add ${hazardType} hazards (multiple allowed). Click Done when finished.`,
   };
 
   return (
@@ -1430,16 +1450,25 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
         <div className="self-start flex items-center gap-2 rounded-lg bg-[#0D1511]/88 backdrop-blur-sm text-slate-200 px-2.5 py-1 text-[11px] border border-white/10 pointer-events-auto">
           <span>{tapModePrompt[tapMode]}</span>
           {tapMode === 'add_hazard' && (
-            <select
-              value={hazardType}
-              onChange={(e) => setHazardType(e.target.value as HazardPinType)}
-              className="bg-slate-800 text-white rounded px-1.5 py-0.5 text-[11px] border border-white/20"
-            >
-              <option value="bunker">Bunker</option>
-              <option value="water">Water</option>
-              <option value="dogleg">Dogleg</option>
-              <option value="layup">Layup</option>
-            </select>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={hazardType}
+                onChange={(e) => setHazardType(e.target.value as HazardPinType)}
+                className="bg-slate-800 text-white rounded px-2 py-0.5 text-[11px] border border-amber-400 font-bold"
+              >
+                <option value="bunker">Bunker</option>
+                <option value="water">Water</option>
+                <option value="dogleg">Dogleg</option>
+                <option value="layup">Layup</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => onChangeTapMode('measure')}
+                className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors shadow-xs"
+              >
+                Done
+              </button>
+            </div>
           )}
         </div>
       </div>

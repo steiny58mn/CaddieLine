@@ -59,7 +59,7 @@ interface UnifiedCourseResponseItem {
 export function isDiscGolfCourse(...parts: Array<string | undefined | null>): boolean {
   const text = parts.filter(Boolean).join(' ').toLowerCase();
   if (!text) return false;
-  return /\b(disc\s*[-/]?\s*golf|disk\s*[-/]?\s*golf|discgolf|diskgolf|frisbee(\s*golf)?|frolf|disc\s*park|disc\s*course|dgc|d\.g\.c\.|dg\s*course|pdga|foot\s*golf|footgolf|soccer\s*golf|mini\s*[-/]?\s*golf|miniature\s*golf|putt\s*[-/]?\s*putt|crazy\s*golf)\b/i.test(text);
+  return /\b(disc|disk|discgolf|diskgolf|frisbee(\s*golf)?|frolf|disc\s*park|disc\s*course|dgc|d\.g\.c\.|dg\s*course|pdga|basket|baskets|polehole|mach\s*iii|disc\s*catcher|innova|discraft|mvp\s*disc|foot\s*golf|footgolf|soccer\s*golf|mini\s*[-/]?\s*golf|miniature\s*golf|putt\s*[-/]?\s*putt|crazy\s*golf|pitch\s*&?\s*putt|brockway)\b/i.test(text);
 }
 
 function mapCandidateToCourseInfo(item: UnifiedCourseResponseItem): CourseInfo {

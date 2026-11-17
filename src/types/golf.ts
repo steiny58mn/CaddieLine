@@ -49,6 +49,7 @@ export interface ShotRecord {
   timestamp: number;
   source: 'manual' | 'nfc' | 'map';
   isPutt?: boolean;
+  isPuttManualOverride?: boolean;
 }
 
 export type HazardPinType = 'bunker' | 'water' | 'dogleg' | 'layup';

@@ -570,13 +570,23 @@ export function isShotPutt(
  */
 export function resolveHoleShotsPutts(shots: ShotRecord[]): ShotRecord[] {
   return shots.map((shot, idx) => {
+    // 1. Explicit player manual override on this shot is always respected
+    if (shot.isPuttManualOverride !== undefined) {
+      return shot;
+    }
+
+    // 2. Manually added putt (e.g. +1 Putt button) is assumed to be a putt
+    if (shot.source === 'manual' && shot.isPutt) {
+      return shot;
+    }
+
     const isPutter = isPutterClub(shot);
     if (!isPutter) {
       // Non-putter shot: landing on green/holed does NOT make it a putt!
       return shot.isPutt ? { ...shot, isPutt: false } : shot;
     }
 
-    // Putter stroke: counts as a putt ONLY if previous shot was on the green
+    // 3. Scanned putter: goes off previous shot landing location (green)
     const prevShot = idx > 0 ? shots[idx - 1] : null;
     const countedAsPutt = prevShot ? prevShot.lie === 'green' : (shot.isPutt ?? false);
 

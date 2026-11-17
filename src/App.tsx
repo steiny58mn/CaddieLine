@@ -654,6 +654,7 @@ export default function App() {
         timestamp: Date.now(),
         source: 'manual',
         isPutt: true,
+        isPuttManualOverride: true,
       };
 
       const nextShots = resolveHoleShotsPutts([...updatedShots, puttShot]);
