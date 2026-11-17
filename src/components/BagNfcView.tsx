@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Check, CheckCircle2, Nfc, Play, Plus, Radio, Smartphone, Trash2 } from 'lucide-react';
-import { Club, DistanceUnit } from '../types/golf';
-import { CLUB_PRESETS, ClubPreset, unitSuffix } from '../utils/golfMath';
+import { Check, CheckCircle2, Layers, Nfc, Plus, Smartphone, Trash2 } from 'lucide-react';
+import { Club, ClubCategory, DistanceUnit } from '../types/golf';
+import { CLUB_PRESETS, ClubPreset, sortGolfClubs, unitSuffix } from '../utils/golfMath';
 import { NfcStatus, NfcTapPayload } from '../hooks/useWebNfc';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -21,9 +21,12 @@ interface BagNfcViewProps {
   onCancelPairing: () => void;
   onUpdateClub: (clubId: string, patch: Partial<Club>) => void;
   onAddClub: (club: Club) => void;
+  onAddMultipleClubs?: (clubs: Club[]) => void;
   onDeleteClub: (clubId: string) => void;
-  onSimulateTagTap: (tagId: string) => void;
+  onSimulateTagTap?: (tagId: string) => void;
 }
+
+const STANDARD_14_IDS = ['dr', '3w', '5w', '3i', '4i', '5i', '6i', '7i', '8i', '9i', 'pw', 'gw', 'sw', 'pt'];
 
 export const BagNfcView: React.FC<BagNfcViewProps> = ({
   bag,
@@ -36,27 +39,28 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
   autoLogOnNfc,
   onChangeUnit,
   onToggleAutoLogOnNfc,
-  onStopNfcScan,
   onStartPairClub,
   onCancelPairing,
   onUpdateClub,
   onAddClub,
+  onAddMultipleClubs,
   onDeleteClub,
-  onSimulateTagTap,
 }) => {
   const [newClubName, setNewClubName] = useState('');
+  const [newClubAbbr, setNewClubAbbr] = useState('');
+  const [selectedPresets, setSelectedPresets] = useState<Set<string>>(new Set());
 
   const suffix = unitSuffix(unit);
 
-  const handleCreateClub = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateClub = (e?: React.FormEvent, shouldScan: boolean = false) => {
+    e?.preventDefault();
     const trimmedName = newClubName.trim();
     if (!trimmedName) return;
 
     const lower = trimmedName.toLowerCase();
-    const category: Club['category'] = lower.includes('putt')
+    const category: ClubCategory = lower.includes('putt')
       ? 'putter'
-      : lower.includes('wedge') || lower.includes('°') || /\b(pw|gw|sw|lw)\b/.test(lower)
+      : lower.includes('wedge') || /^\d\d°/.test(trimmedName) || /\b(pw|gw|sw|lw|aw)\b/i.test(lower)
         ? 'wedge'
         : lower.includes('hybrid') || /\b\dh\b/.test(lower)
           ? 'hybrid'
@@ -68,8 +72,9 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
       category === 'putter' ? 10 : category === 'wedge' ? 100 : category === 'wood' ? 220 : 165;
 
     const firstToken = trimmedName.split(/\s+/)[0] ?? trimmedName;
-    const shortName =
+    const autoShort =
       firstToken.length <= 4 ? firstToken.toUpperCase() : trimmedName.slice(0, 3).toUpperCase();
+    const shortName = newClubAbbr.trim() ? newClubAbbr.trim().toUpperCase() : autoShort;
 
     const id = `club_${Date.now()}`;
     const created: Club = {
@@ -80,8 +85,78 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
       typicalYards,
     };
     onAddClub(created);
-    onStartPairClub(created);
+    if (shouldScan) {
+      onStartPairClub(created);
+    }
     setNewClubName('');
+    setNewClubAbbr('');
+  };
+
+  const handleAddStandard14 = () => {
+    const existingIds = new Set(bag.map((c) => c.id));
+    const toAdd: Club[] = [];
+    for (const presetId of STANDARD_14_IDS) {
+      if (!existingIds.has(presetId)) {
+        const preset = CLUB_PRESETS.find((p) => p.id === presetId);
+        if (preset) {
+          toAdd.push({
+            id: preset.id,
+            name: preset.name,
+            shortName: preset.shortName,
+            category: preset.category,
+            typicalYards: preset.typicalYards,
+          });
+        }
+      }
+    }
+    if (toAdd.length > 0) {
+      if (onAddMultipleClubs) {
+        onAddMultipleClubs(toAdd);
+      } else {
+        toAdd.forEach((c) => onAddClub(c));
+      }
+    }
+    setSelectedPresets(new Set());
+  };
+
+  const handleTogglePresetSelection = (presetId: string) => {
+    setSelectedPresets((prev) => {
+      const next = new Set(prev);
+      if (next.has(presetId)) {
+        next.delete(presetId);
+      } else {
+        next.add(presetId);
+      }
+      return next;
+    });
+  };
+
+  const handleAddSelectedPresets = () => {
+    if (selectedPresets.size === 0) return;
+    const existingIds = new Set(bag.map((c) => c.id));
+    const toAdd: Club[] = [];
+    selectedPresets.forEach((presetId) => {
+      if (!existingIds.has(presetId)) {
+        const preset = CLUB_PRESETS.find((p) => p.id === presetId);
+        if (preset) {
+          toAdd.push({
+            id: preset.id,
+            name: preset.name,
+            shortName: preset.shortName,
+            category: preset.category,
+            typicalYards: preset.typicalYards,
+          });
+        }
+      }
+    });
+    if (toAdd.length > 0) {
+      if (onAddMultipleClubs) {
+        onAddMultipleClubs(toAdd);
+      } else {
+        toAdd.forEach((c) => onAddClub(c));
+      }
+    }
+    setSelectedPresets(new Set());
   };
 
   return (
@@ -89,11 +164,11 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <div className="text-xs font-medium text-slate-500">
-            Web NFC Hardware Integration ·{' '}
-            {bag.length === 0 ? 'No clubs paired yet' : `${bag.length} clubs configured`}
+            Hardware NFC Tag Sensors ·{' '}
+            {bag.length === 0 ? 'No clubs in bag' : `${bag.length} clubs configured`}
           </div>
           <h2 className="font-display text-2xl sm:text-3xl font-black text-[#0F1A14] dark:text-slate-100 tracking-tight mt-0.5">
-            GolfBag & GolfPad NFC Sensors
+            GolfBag & NFC Sensors
           </h2>
         </div>
 
@@ -120,7 +195,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
         </div>
       </div>
 
-      {/* GolfPad Web NFC Scanner Status Card */}
+      {/* NFC Scanner Status Card */}
       <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 p-5 sm:p-6 space-y-4 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
@@ -135,28 +210,20 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">
-                GolfPad / NTAG Grip Tag Pairing (Web NFC)
+                GolfPad / NTAG Grip Tag Integration
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl">
-                {nfcSupported
-                  ? 'Tap any club button below (D, 3W, 5W, 7W, etc.) to start NFC scanning immediately, then hold your phone against the club grip tag to pair it.'
-                  : 'Tap any club button below to pair it. Hardware Web NFC scanning runs in Chrome on Android over HTTPS; on desktop or iOS you can simulate tag scans or enter tag IDs.'}
+                Tap <strong>Pair Tag</strong> next to any club in your bag, then hold your phone against the grip sensor to pair.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <PWAInstallButton />
-            {nfcStatus === 'scanning' && (
-              <button
-                type="button"
-                onClick={onStopNfcScan}
-                className="min-h-[44px] px-4 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 inline-flex items-center gap-2 whitespace-nowrap"
-              >
-                <Radio className="w-4 h-4 text-emerald-400" />
-                <span>Stop NFC Scan</span>
-              </button>
-            )}
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-800 dark:text-emerald-300 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>NFC Active</span>
+            </div>
           </div>
         </div>
 
@@ -167,31 +234,18 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
         )}
 
         {pairingTarget && (
-          <div className="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 text-xs text-sky-950 font-medium">
-              <Smartphone className="w-4 h-4 text-sky-700 shrink-0" />
+          <div className="rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2.5 text-xs text-sky-950 dark:text-sky-200 font-medium">
+              <Smartphone className="w-4 h-4 text-sky-700 dark:text-sky-400 shrink-0" />
               <span>
-                Scanning for <strong>{pairingTarget.name} ({pairingTarget.shortName})</strong> — tap
-                your physical GolfPad tag to the NFC reader now.
+                Scanning for <strong>{pairingTarget.name}</strong> — tap your physical grip tag against your phone now.
               </span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {(!nfcSupported || nfcStatus !== 'scanning') && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onSimulateTagTap(`GP-TAG-${pairingTarget.shortName.toUpperCase()}-01`)
-                  }
-                  className="min-h-[36px] px-3 rounded-lg bg-emerald-700 text-white text-xs font-semibold hover:bg-emerald-800 inline-flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <Play className="w-3 h-3 fill-current" />
-                  <span>Simulate Tap</span>
-                </button>
-              )}
               <button
                 type="button"
                 onClick={onCancelPairing}
-                className="min-h-[36px] px-2.5 text-xs font-semibold text-sky-800 hover:underline whitespace-nowrap"
+                className="h-8 px-3 rounded-lg text-xs font-bold text-sky-800 dark:text-sky-300 bg-sky-100 dark:bg-sky-900/60 hover:bg-sky-200 transition-colors"
               >
                 Cancel
               </button>
@@ -199,7 +253,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
           </div>
         )}
 
-        <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -207,124 +261,262 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
               onChange={(e) => onToggleAutoLogOnNfc(e.target.checked)}
               className="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
             />
-            <span className="text-xs font-medium text-slate-700">
-              Auto-log previous shot when a new club NFC tag is tapped (records GPS carry distance)
+            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+              Auto-log previous shot when a new club NFC tag is scanned (records GPS carry distance)
             </span>
           </label>
-
-          {lastNfcTap && (
-            <div className="text-xs font-mono text-slate-500 tabular-nums">
-              Last read: <strong className="text-[#0F1A14]">{lastNfcTap.tagId}</strong> (
-              {lastNfcTap.source})
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Paired Clubs List */}
-      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      {/* Quick Add Clubs Card (Placed Above Bag List to prevent layout shift) */}
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 p-5 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
           <div>
-            <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Paired Clubs in Your Bag</h3>
+            <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">
+              Add Clubs to Bag
+            </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Clubs appear here as you pair them below. Adjust carry yardages or re-scan tags anytime.
+              Tap any club to add it immediately, or select multiples and add all at once.
             </p>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAddStandard14}
+              className="h-8 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-2xs"
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Add Standard 14 Set</span>
+            </button>
+
+            {selectedPresets.size > 0 && (
+              <button
+                type="button"
+                onClick={handleAddSelectedPresets}
+                className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow-sm active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Selected ({selectedPresets.size})</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Preset Chips Grid - Constant position without shifting */}
+        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+          {CLUB_PRESETS.map((preset) => {
+            const existing = bag.find((c) => c.id === preset.id);
+            const isScanningThis = pairingTarget?.id === preset.id;
+            const isPaired = Boolean(existing?.nfcTagId);
+            const isSelected = selectedPresets.has(preset.id);
+
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (existing) {
+                    if (isScanningThis) {
+                      onCancelPairing();
+                    } else {
+                      onStartPairClub(preset);
+                    }
+                  } else {
+                    if (selectedPresets.size > 0) {
+                      handleTogglePresetSelection(preset.id);
+                    } else {
+                      onAddClub({
+                        id: preset.id,
+                        name: preset.name,
+                        shortName: preset.shortName,
+                        category: preset.category,
+                        typicalYards: preset.typicalYards,
+                      });
+                    }
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  if (!existing) handleTogglePresetSelection(preset.id);
+                }}
+                className={`min-h-[48px] px-2 py-1.5 rounded-xl border text-center flex flex-col items-center justify-center gap-0.5 transition-colors relative select-none ${
+                  isScanningThis
+                    ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
+                    : isPaired
+                      ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-950 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100'
+                      : existing
+                        ? 'bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 border-emerald-300/80 dark:border-emerald-800'
+                        : isSelected
+                          ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-950 dark:text-sky-200 border-sky-400 ring-2 ring-sky-300'
+                          : 'bg-slate-50 dark:bg-slate-900/60 text-slate-600 dark:text-slate-400 border-dashed border-slate-300 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800'
+                }`}
+                title={
+                  existing
+                    ? isPaired
+                      ? `${preset.name} (Paired)`
+                      : `${preset.name} (In Bag · Click to Pair)`
+                    : `Click to add ${preset.name} to bag`
+                }
+              >
+                <span className="font-mono text-xs font-bold leading-none">
+                  {preset.shortName}
+                </span>
+                <span
+                  className={`text-[10px] leading-none truncate max-w-full font-semibold ${
+                    isScanningThis
+                      ? 'text-sky-100'
+                      : isPaired
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : existing
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : isSelected
+                            ? 'text-sky-700 dark:text-sky-400'
+                            : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {isScanningThis
+                    ? 'Scan...'
+                    : isPaired
+                      ? 'Paired'
+                      : existing
+                        ? 'In Bag'
+                        : isSelected
+                          ? 'Selected'
+                          : '+ Add'}
+                </span>
+                {existing && (
+                  <Check
+                    className="w-3 h-3 text-emerald-600 dark:text-emerald-400 absolute top-1 right-1"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Custom Club Form */}
+        <form
+          onSubmit={(e) => handleCreateClub(e, false)}
+          className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-2"
+        >
+          <input
+            type="text"
+            value={newClubName}
+            onChange={(e) => setNewClubName(e.target.value)}
+            placeholder="Custom Club (e.g. 54° Wedge, 8 Iron)"
+            aria-label="Club name"
+            className="h-9 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-[#0F1A14] dark:text-slate-100 flex-1 min-w-[140px]"
+          />
+          <input
+            type="text"
+            value={newClubAbbr}
+            onChange={(e) => setNewClubAbbr(e.target.value)}
+            placeholder="Abbr (54°)"
+            aria-label="Club abbreviation"
+            maxLength={5}
+            className="h-9 px-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-[#0F1A14] dark:text-slate-100 w-24 text-center uppercase"
+          />
+          <button
+            type="button"
+            onClick={() => handleCreateClub(undefined, false)}
+            disabled={!newClubName.trim()}
+            className="h-9 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold inline-flex items-center gap-1 whitespace-nowrap shadow-2xs active:scale-95 transition-all disabled:opacity-40"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Club</span>
+          </button>
+        </form>
+      </div>
+
+      {/* Bag Clubs List Card - Single-line club rows */}
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">
+            Clubs in Your Bag ({bag.length})
+          </h3>
+          <span className="text-xs text-slate-500">
+            {bag.filter((c) => Boolean(c.nfcTagId)).length} of {bag.length} paired
+          </span>
         </div>
 
         {bag.length === 0 ? (
           <div className="px-5 py-8 text-center text-xs text-slate-500">
-            No clubs paired yet. Click any club button at the bottom to start scanning its tag right away.
+            No clubs in bag yet. Tap any club above to add it.
           </div>
         ) : (
-          <div className="divide-y divide-slate-100">
-            {bag.map((club) => {
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
+            {sortGolfClubs(bag).map((club) => {
               const isPairing = pairingTarget?.id === club.id;
+              const isPaired = Boolean(club.nfcTagId);
+              // Strictly ensure average does not exceed 3 digits
+              const safeAvg =
+                typeof club.typicalYards === 'number' && !isNaN(club.typicalYards)
+                  ? Math.min(999, Math.max(0, Math.round(club.typicalYards)))
+                  : null;
+              const displayAvg = safeAvg !== null ? safeAvg : '—';
+
               return (
                 <div
                   key={club.id}
-                  className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60"
+                  className="px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 hover:bg-slate-50/70 dark:hover:bg-slate-800/50 transition-colors"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#0F1A14] text-white font-mono text-xs font-bold flex items-center justify-center shrink-0">
+                  {/* Left: Short Name, Name, Type, Paired status (NO UID) */}
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-[#0F1A14] dark:bg-slate-800 text-white font-mono text-xs font-black flex items-center justify-center shrink-0 shadow-2xs">
                       {club.shortName}
                     </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#0F1A14] truncate">{club.name}</div>
-                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span>{club.category.charAt(0).toUpperCase() + club.category.slice(1)}</span>
-                        <span aria-hidden="true">·</span>
-                        {club.nfcTagId ? (
-                          <span className="inline-flex items-center gap-1 font-mono text-emerald-700">
-                            <CheckCircle2 className="w-3 h-3" />
-                            {club.nfcTagId}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">No tag paired</span>
-                        )}
-                      </div>
+                    <div className="min-w-0 flex items-center gap-1.5 sm:gap-2">
+                      <span className="text-xs sm:text-sm font-bold text-[#0F1A14] dark:text-slate-100 truncate">
+                        {club.name}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 shrink-0 hidden xs:inline">
+                        {club.category}
+                      </span>
+                      {isPaired ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.5 rounded-md shrink-0">
+                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                          <span>Paired</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 shrink-0 hidden sm:inline">
+                          Unpaired
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-600">
-                      <span>Avg:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={380}
-                        value={club.typicalYards}
-                        onChange={(e) =>
-                          onUpdateClub(club.id, { typicalYards: Math.max(1, Number(e.target.value)) })
-                        }
-                        className="w-16 h-9 px-2 rounded-lg border border-slate-200 font-mono text-xs tabular-nums text-center text-[#0F1A14]"
-                        aria-label={`${club.name} typical yardage`}
-                      />
-                      <span className="font-mono text-[11px] text-slate-400">{suffix}</span>
-                    </label>
-
-                    <input
-                      type="text"
-                      value={club.nfcTagId ?? ''}
-                      onChange={(e) =>
-                        onUpdateClub(club.id, { nfcTagId: e.target.value.toUpperCase() || undefined })
-                      }
-                      placeholder="NFC Tag UID"
-                      className="w-32 h-9 px-2.5 rounded-lg border border-slate-200 font-mono text-xs text-[#0F1A14] placeholder:text-slate-300"
-                      aria-label={`${club.name} NFC tag ID`}
-                    />
+                  {/* Right: Avg pill, Pair Tag button, Delete button (NO Sim Tap) */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400 shadow-2xs">
+                      <span className="text-[10px] text-slate-500 font-sans font-semibold">Avg:</span>
+                      <span>{displayAvg}</span>
+                      <span className="text-[10px] text-slate-400 font-sans">{suffix}</span>
+                    </div>
 
                     <button
                       type="button"
                       onClick={() => (isPairing ? onCancelPairing() : onStartPairClub(club))}
-                      className={`min-h-[36px] px-3 rounded-lg border text-xs font-semibold whitespace-nowrap transition-colors ${
+                      className={`h-8 px-2.5 rounded-lg border text-xs font-bold whitespace-nowrap transition-colors shrink-0 ${
                         isPairing
-                          ? 'bg-sky-600 text-white border-sky-600'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                          ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
+                          : isPaired
+                            ? 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+                            : 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-2xs'
                       }`}
                     >
-                      {isPairing ? 'Scanning...' : 'Pair Tag'}
+                      {isPairing ? 'Scanning...' : isPaired ? 'Re-pair' : 'Pair Tag'}
                     </button>
-
-                    {club.nfcTagId && (
-                      <button
-                        type="button"
-                        onClick={() => onSimulateTagTap(club.nfcTagId!)}
-                        className="min-h-[36px] px-3 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 text-xs font-semibold inline-flex items-center gap-1 whitespace-nowrap"
-                        title="Simulate tapping this GolfPad NFC tag on mobile"
-                      >
-                        <Play className="w-3 h-3 fill-current" />
-                        <span>Sim Tap</span>
-                      </button>
-                    )}
 
                     <button
                       type="button"
                       onClick={() => onDeleteClub(club.id)}
-                      className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                      className="h-8 w-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0 transition-colors"
                       aria-label={`Remove ${club.name}`}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -332,86 +524,6 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
             })}
           </div>
         )}
-
-        {/* Quick Club Buttons at the Bottom — Tap Any Club to Start Scanning Immediately */}
-        <div className="px-5 py-5 bg-slate-50/70 dark:bg-slate-900/60 border-t border-slate-200/80 dark:border-slate-800/80 space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-            <h4 className="text-xs font-black text-[#0F1A14] dark:text-slate-100">
-              Tap a Club to Scan & Pair NFC Tag
-            </h4>
-            <span className="text-[11px] text-slate-500">
-              Clicking any club starts NFC scanning right away
-            </span>
-          </div>
-
-          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-            {CLUB_PRESETS.map((preset) => {
-              const existing = bag.find((c) => c.id === preset.id);
-              const isScanningThis = pairingTarget?.id === preset.id;
-              const isPaired = Boolean(existing?.nfcTagId);
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() =>
-                    isScanningThis ? onCancelPairing() : onStartPairClub(preset)
-                  }
-                  className={`min-h-[48px] px-2 py-2 rounded-xl border text-center flex flex-col items-center justify-center gap-0.5 transition-colors relative ${
-                    isScanningThis
-                      ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
-                      : isPaired
-                        ? 'bg-emerald-50 text-emerald-950 border-emerald-300 hover:bg-emerald-100'
-                        : 'bg-white text-[#0F1A14] border-slate-200 hover:bg-slate-50 hover:border-slate-300'
-                  }`}
-                  title={`Scan NFC tag for ${preset.name}`}
-                >
-                  <span className="font-mono text-xs font-bold leading-none">
-                    {preset.shortName}
-                  </span>
-                  <span
-                    className={`text-[10px] leading-none truncate max-w-full ${
-                      isScanningThis
-                        ? 'text-sky-100'
-                        : isPaired
-                          ? 'text-emerald-700 font-semibold'
-                          : 'text-slate-400'
-                    }`}
-                  >
-                    {isScanningThis ? 'Scan...' : isPaired ? 'Paired' : 'Tap'}
-                  </span>
-                  {isPaired && !isScanningThis && (
-                    <Check
-                      className="w-3 h-3 text-emerald-700 absolute top-1 right-1"
-                      aria-hidden="true"
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Add & Scan Custom Club Row */}
-        <form
-          onSubmit={handleCreateClub}
-          className="px-5 py-4 bg-slate-50/90 dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2.5"
-        >
-          <input
-            type="text"
-            value={newClubName}
-            onChange={(e) => setNewClubName(e.target.value)}
-            placeholder="Club name (e.g. 54° Wedge)"
-            aria-label="Club name"
-            className="h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-[#0F1A14] dark:text-slate-100 flex-1 min-w-[150px]"
-          />
-          <button
-            type="submit"
-            className="h-10 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add & Scan</span>
-          </button>
-        </form>
       </div>
     </div>
   );

@@ -188,6 +188,8 @@ export interface CourseInfo {
   selectedTeeId?: string;
 }
 
+export type RoundHoleMode = '18' | 'front9' | 'back9' | 'all27';
+
 export interface RoundState {
   id: string;
   course: CourseInfo | null;
@@ -195,6 +197,7 @@ export interface RoundState {
   updatedAt: number;
   unit: DistanceUnit;
   currentHole: number;
+  holeMode?: RoundHoleMode;
   holes: Record<number, HolePinData>;
   scores: Record<number, HoleScoreState>;
 }
@@ -209,5 +212,5 @@ export type MapTapMode =
   | 'set_green_back'
   | 'add_hazard';
 
-export type AppViewTab = 'stats' | 'map' | 'scorecard' | 'bag';
+export type AppViewTab = 'stats' | 'map' | 'scorecard' | 'analytics' | 'bag';
 

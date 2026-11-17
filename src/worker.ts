@@ -247,8 +247,17 @@ function normalizeCourseName(name: string): string {
   return name
     .toLowerCase()
     .replace(/^the\s+/, '')
-    .replace(/\b(golf|course|club|links|country|resort)\b/g, '')
+    .replace(/\b(golf|course|club|links|country|resort|gc|cc)\b/g, '')
     .replace(/[^a-z0-9]/g, '');
+}
+
+function rateCandidateQuality(name: string, formattedAddress?: string, score?: number): number {
+  let pts = score ?? 50;
+  const addr = formattedAddress || '';
+  if (/\d/.test(addr)) pts += 40;
+  if (/\b(township of|town of|township)\b/i.test(addr)) pts -= 35;
+  if (/\b(golf|course|club)\b/i.test(name)) pts += 10;
+  return pts;
 }
 
 function getTeeColor(teeName: string): string | undefined {
@@ -818,20 +827,32 @@ function deduplicateCourses(items: UnifiedCourseCandidate[]): UnifiedCourseCandi
     const existingIdx = out.findIndex((prev) => {
       const dist = haversineMeters(prev.lat, prev.lng, item.lat, item.lng);
       const prevNorm = normalizeCourseName(prev.name);
-      if (dist < 2500 && norm && prevNorm && norm === prevNorm) return true;
-      if (dist < 150) return true;
+
+      // 1. Close physical proximity: same parcel / clubhouse
+      if (dist < 500) return true;
+
+      // 2. Exact normalized name match within regional distance (up to 35km)
+      if (norm && prevNorm && norm === prevNorm) {
+        const maxDist = norm.length >= 5 ? 35000 : 15000;
+        if (dist < maxDist) return true;
+      }
+
+      // 3. One name contains the other within 20km (e.g. 'The Summit' vs 'Summit Golf Club')
+      if (norm && prevNorm && (norm.includes(prevNorm) || prevNorm.includes(norm))) {
+        const minLen = Math.min(norm.length, prevNorm.length);
+        if (minLen >= 5 && dist < 20000) return true;
+      }
+
       return false;
     });
+
     if (existingIdx === -1) {
       out.push(item);
     } else {
       const prev = out[existingIdx];
-      const prevHasStreet = Boolean(prev.formattedAddress && /\d/.test(prev.formattedAddress));
-      const itemHasStreet = Boolean(item.formattedAddress && /\d/.test(item.formattedAddress));
-      if (
-        (!prevHasStreet && itemHasStreet) ||
-        (prevHasStreet === itemHasStreet && item.score > prev.score)
-      ) {
+      const prevScore = rateCandidateQuality(prev.name, prev.formattedAddress, prev.score);
+      const itemScore = rateCandidateQuality(item.name, item.formattedAddress, item.score);
+      if (itemScore > prevScore) {
         out[existingIdx] = item;
       }
     }

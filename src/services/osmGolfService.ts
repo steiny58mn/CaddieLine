@@ -18,7 +18,7 @@ import {
   pointToPolylineMinDistanceMeters,
 } from '../utils/golfMath';
 
-const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v5_';
+const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v11_';
 const METERS_TO_YARDS = 1.0936133;
 
 interface OverpassPoint {
@@ -91,6 +91,79 @@ async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 10000): Promise<
   } finally {
     clearTimeout(timer);
   }
+}
+
+
+export function normalizeCourseName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^the\s+/, '')
+    .replace(/\b(golf|course|club|links|country|resort|gc|cc)\b/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function rateCandidateQuality(name: string, formattedAddress?: string, score?: number): number {
+  let pts = score ?? 50;
+  const addr = formattedAddress || '';
+  if (/\d/.test(addr)) pts += 40;
+  if (/\b(township of|town of|township)\b/i.test(addr)) pts -= 35;
+  if (/\b(golf|course|club)\b/i.test(name)) pts += 10;
+  return pts;
+}
+
+export function deduplicateUnifiedCourses<T extends { name: string; lat: number; lng: number; formattedAddress?: string; score?: number }>(
+  items: T[]
+): T[] {
+  const out: T[] = [];
+  for (const item of items) {
+    const norm = normalizeCourseName(item.name);
+    const existingIdx = out.findIndex((prev) => {
+      const dist = computeDistanceMeters({ lat: prev.lat, lng: prev.lng }, { lat: item.lat, lng: item.lng });
+      const prevNorm = normalizeCourseName(prev.name);
+
+      // 1. Close physical proximity: same parcel / clubhouse
+      if (dist < 500) return true;
+
+      // 2. Exact normalized name match within regional distance (up to 35km)
+      if (norm && prevNorm && norm === prevNorm) {
+        const maxDist = norm.length >= 5 ? 35000 : 15000;
+        if (dist < maxDist) return true;
+      }
+
+      // 3. One name contains the other within 20km (e.g. 'The Summit' vs 'Summit Golf Club')
+      if (norm && prevNorm && (norm.includes(prevNorm) || prevNorm.includes(norm))) {
+        const minLen = Math.min(norm.length, prevNorm.length);
+        if (minLen >= 5 && dist < 20000) return true;
+      }
+
+      return false;
+    });
+
+    if (existingIdx === -1) {
+      out.push(item);
+    } else {
+      const prev = out[existingIdx];
+      const prevScore = rateCandidateQuality(prev.name, prev.formattedAddress, prev.score);
+      const itemScore = rateCandidateQuality(item.name, item.formattedAddress, item.score);
+      if (itemScore > prevScore) {
+        out[existingIdx] = item;
+      }
+    }
+  }
+  return out;
+}
+
+export function deduplicateCoursesList(courses: CourseInfo[]): CourseInfo[] {
+  const candidates = courses.map((c) => ({
+    ...c,
+    lat: c.location.lat,
+    lng: c.location.lng,
+  }));
+  const deduped = deduplicateUnifiedCourses(candidates);
+  return deduped.map((c) => {
+    const { lat, lng, ...rest } = c;
+    return rest as CourseInfo;
+  });
 }
 
 async function queryDirectCourseDirectories(
@@ -200,13 +273,7 @@ async function queryDirectCourseDirectories(
     throw new Error('Unable to reach golf course directories');
   }
 
-  const deduped: UnifiedCourseResponseItem[] = [];
-  for (const item of items) {
-    const dup = deduped.some(
-      (prev) => computeDistanceMeters({ lat: prev.lat, lng: prev.lng }, { lat: item.lat, lng: item.lng }) < 650
-    );
-    if (!dup) deduped.push(item);
-  }
+  const deduped = deduplicateUnifiedCourses(items);
 
   if (near) {
     const withDistances = deduped.map((c) => {
@@ -250,9 +317,10 @@ export async function findNearbyCoursesOsm(
       10000
     );
     if (data.courses && data.courses.length > 0) {
-      return data.courses
+      const mapped = data.courses
         .filter((c) => !isDiscGolfCourse(c.name, c.formattedAddress))
         .map(mapCandidateToCourseInfo);
+      return deduplicateCoursesList(mapped);
     }
   } catch (err) {
     console.warn('Backend /api/osm/nearby unavailable, using direct directory fallback:', err);
@@ -299,7 +367,8 @@ export async function searchCoursesOsm(
     console.warn('Backend /api/osm/search unavailable, using direct directory fallback:', err);
   }
 
-  return queryDirectCourseDirectories(trimmed, near);
+  const finalCourses = await queryDirectCourseDirectories(trimmed, near);
+  return deduplicateCoursesList(finalCourses);
 }
 
 function toLatLngs(points?: OverpassPoint[]): LatLngLiteral[] {
@@ -617,7 +686,11 @@ export function getCachedOsmCourseGeometry(courseId: string): OsmCourseGeometry 
   try {
     const raw = localStorage.getItem(`${GEOMETRY_CACHE_PREFIX}${courseId}`);
     if (!raw) return null;
-    return JSON.parse(raw) as OsmCourseGeometry;
+    const parsed = JSON.parse(raw) as OsmCourseGeometry;
+    if (!parsed || !Array.isArray(parsed.holes) || parsed.holes.length === 0) {
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -625,6 +698,7 @@ export function getCachedOsmCourseGeometry(courseId: string): OsmCourseGeometry 
 
 export function saveCachedOsmCourseGeometry(geometry: OsmCourseGeometry): void {
   try {
+    if (!geometry || !Array.isArray(geometry.holes) || geometry.holes.length === 0) return;
     localStorage.setItem(`${GEOMETRY_CACHE_PREFIX}${geometry.courseId}`, JSON.stringify(geometry));
   } catch {
     // Ignore storage quota errors
@@ -697,6 +771,103 @@ export function filterGeometryForSubCourse(
   };
 }
 
+async function fetchOsmCourseElementsDirect(lat: number, lng: number): Promise<OverpassElement[]> {
+  const halfSpanLat = 0.0175;
+  const cosLat = Math.max(0.25, Math.cos((lat * Math.PI) / 180));
+  const halfSpanLng = 0.0175 / cosLat;
+
+  const tiles = [
+    [lng - halfSpanLng, lat - halfSpanLat, lng, lat],
+    [lng, lat - halfSpanLat, lng + halfSpanLng, lat],
+    [lng - halfSpanLng, lat, lng, lat + halfSpanLat],
+    [lng, lat, lng + halfSpanLng, lat + halfSpanLat],
+  ];
+
+  const nodeCoords = new Map<number, OverpassPoint>();
+  const ways = new Map<number, OverpassElement & { nodes?: number[] }>();
+  const relations = new Map<number, OverpassElement>();
+  const standaloneNodes: OverpassElement[] = [];
+
+  await Promise.all(
+    tiles.map(async ([minLng, minLat, maxLng, maxLat]) => {
+      const url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${minLng.toFixed(5)},${minLat.toFixed(5)},${maxLng.toFixed(5)},${maxLat.toFixed(5)}`;
+      try {
+        const data = await fetchJsonWithTimeout<{ elements?: Array<OverpassElement & { nodes?: number[] }> }>(
+          url,
+          12000
+        );
+        for (const el of data.elements ?? []) {
+          if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
+            nodeCoords.set(el.id, { lat: el.lat, lon: el.lon });
+            if (el.tags && (el.tags.golf || el.tags.natural === 'water')) {
+              standaloneNodes.push(el);
+            }
+          } else if (el.type === 'way') {
+            ways.set(el.id, el);
+          } else if (el.type === 'relation') {
+            relations.set(el.id, el);
+          }
+        }
+      } catch {
+        // Continue on single tile error
+      }
+    })
+  );
+
+  const wayGeometryById = new Map<number, OverpassPoint[]>();
+  const output: OverpassElement[] = [...standaloneNodes];
+
+  for (const way of ways.values()) {
+    const geom: OverpassPoint[] = [];
+    for (const nodeId of way.nodes ?? []) {
+      const pt = nodeCoords.get(nodeId);
+      if (pt) geom.push(pt);
+    }
+    if (geom.length >= 2) {
+      wayGeometryById.set(way.id, geom);
+    }
+    const golf = way.tags?.golf;
+    const isWater = way.tags?.natural === 'water';
+    const isCourse = way.tags?.leisure === 'golf_course';
+    if (golf || isWater || isCourse) {
+      output.push({
+        type: 'way',
+        id: way.id,
+        tags: way.tags,
+        geometry: geom,
+      });
+    }
+  }
+
+  for (const rel of relations.values()) {
+    const golf = rel.tags?.golf;
+    const isWater = rel.tags?.natural === 'water';
+    const isCourse = rel.tags?.leisure === 'golf_course';
+    if (!golf && !isWater && !isCourse) continue;
+
+    const members = (rel.members ?? []).map((m) => {
+      if (m.type === 'way') {
+        return {
+          type: 'way',
+          ref: m.ref,
+          role: m.role ?? '',
+          geometry: wayGeometryById.get(m.ref),
+        };
+      }
+      return m;
+    });
+
+    output.push({
+      type: 'relation',
+      id: rel.id,
+      tags: rel.tags,
+      members,
+    });
+  }
+
+  return output;
+}
+
 export async function fetchCourseGolfGeometry(
   course: CourseInfo,
   forceRefresh = false
@@ -730,6 +901,15 @@ export async function fetchCourseGolfGeometry(
     }
   } catch (err) {
     console.warn('Could not sync live OSM geometry, checking cache or using empty geometry:', err);
+  }
+
+  if (elements.length === 0 && course.location && !Number.isNaN(course.location.lat)) {
+    try {
+      console.log('Fetching live OSM course elements directly via OpenStreetMap API...');
+      elements = await fetchOsmCourseElementsDirect(course.location.lat, course.location.lng);
+    } catch (directErr) {
+      console.warn('Direct OSM fetch failed:', directErr);
+    }
   }
 
   if (elements.length === 0) {
@@ -860,6 +1040,18 @@ export async function fetchCourseGolfGeometry(
     if (tags.leisure === 'golf_course') continue;
     const golfTag = tags.golf;
 
+    if (el.type === 'node' && el.lat !== undefined && el.lon !== undefined) {
+      const center = { lat: el.lat, lng: el.lon };
+      const id = `osm_node_${el.id}`;
+      const holeRef = parseHoleNumber(tags.ref, tags.name) ?? undefined;
+      if (golfTag === 'tee') {
+        tees.push({ id, kind: 'tee', label: tags.name || 'Tee', holeNumber: holeRef, polygon: [center], center });
+      } else if (golfTag === 'green') {
+        greens.push({ id, kind: 'green', label: holeRef ? `Hole ${holeRef} Green` : 'Green', holeNumber: holeRef, polygon: [center], center });
+      }
+      continue;
+    }
+
     if (golfTag === 'hole' && el.type === 'way' && el.geometry && el.geometry.length >= 2) {
       const holeNumber = parseHoleNumber(tags.ref, tags.name);
       if (!holeNumber) continue;
@@ -869,6 +1061,7 @@ export async function fetchCourseGolfGeometry(
       const greenCenterLatLng = path[path.length - 1];
       const midPt = path[Math.floor(path.length / 2)];
       if (
+        selectedBoundaries.length >= 2 &&
         courseBoundaryRings &&
         !isInsideSelectedCourse(teeLatLng) &&
         !isInsideSelectedCourse(greenCenterLatLng) &&
@@ -913,7 +1106,7 @@ export async function fetchCourseGolfGeometry(
     }
 
     const center = computePolygonCentroid(polygon);
-    if (courseBoundaryRings && !isInsideSelectedCourse(center)) {
+    if (selectedBoundaries.length >= 2 && courseBoundaryRings && !isInsideSelectedCourse(center)) {
       continue;
     }
     const id = `osm_${el.type}_${el.id}`;

@@ -2,7 +2,7 @@
 
 const config: CapacitorConfig = {
   appId: 'com.caddieline.app',
-  appName: 'CaddieLine',
+  appName: 'PocketCaddie',
   webDir: 'dist',
   server: {
     androidScheme: 'https'

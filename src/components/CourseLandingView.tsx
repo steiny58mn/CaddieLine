@@ -15,10 +15,12 @@ import {
   searchCoursesOsm,
   summarizeOsmGeometry,
   isDiscGolfCourse,
+  deduplicateCoursesList,
 } from '../services/osmGolfService';
 import {
   checkGolfApiStatus,
   combineSubCourseTees,
+  combine3SubCourseTees,
   fetchGolfCourseMatch,
   GolfApiStatus,
   matchSubCourseNameToGca,
@@ -95,8 +97,18 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   } | null>(null);
   const [comboFrontId, setComboFrontId] = useState<string>('');
   const [comboBackId, setComboBackId] = useState<string>('');
+  const [combo27Loop1Id, setCombo27Loop1Id] = useState<string>('');
+  const [combo27Loop2Id, setCombo27Loop2Id] = useState<string>('');
+  const [combo27Loop3Id, setCombo27Loop3Id] = useState<string>('');
   const [apiStatus, setApiStatus] = useState<GolfApiStatus | null>(null);
   const [showKeyDetails, setShowKeyDetails] = useState(false);
+  const [customApiKey, setCustomApiKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('caddieline_golf_api_key') || '';
+    } catch {
+      return '';
+    }
+  });
 
   useEffect(() => {
     void checkGolfApiStatus().then((status) => {
@@ -115,7 +127,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
 
     try {
       const courses = await findNearbyCoursesOsm(targetPos, 45000);
-      setResults(courses);
+      setResults(deduplicateCoursesList(courses));
     } catch {
       setErrorMessage('Could not reach nearby course directories. Try searching by name above.');
     } finally {
@@ -137,7 +149,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
 
       try {
         const courses = await searchCoursesOsm(trimmed, userPosition);
-        setResults(courses);
+        setResults(deduplicateCoursesList(courses));
       } catch {
         setErrorMessage('Unable to complete course search right now. Check your connection.');
       } finally {
@@ -238,6 +250,47 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
     [onSelectCourse]
   );
 
+  const handlePick27ComboLoops = useCallback(
+    (
+      course: CourseInfo,
+      fullGeometry: OsmCourseGeometry,
+      loop1: PendingLoopOption,
+      loop2: PendingLoopOption,
+      loop3: PendingLoopOption
+    ) => {
+      const comboId = `combo27__${loop1.id}__${loop2.id}__${loop3.id}`;
+      const comboName = `${loop1.name} / ${loop2.name} / ${loop3.name}`;
+      const summary = summarizeOsmGeometry(fullGeometry);
+
+      const combinedTees =
+        loop1.gcaDetail && loop2.gcaDetail && loop3.gcaDetail
+          ? combine3SubCourseTees(loop1.gcaDetail, loop2.gcaDetail, loop3.gcaDetail)
+          : [];
+      const defaultTee = pickDefaultTee(combinedTees);
+      const attributions = Array.from(
+        new Set([
+          ...(course.attributions ?? []),
+          ...(combinedTees.length > 0 ? ['GolfCourseAPI'] : []),
+          'OpenStreetMap',
+        ])
+      );
+
+      const subCourseInfo: CourseInfo = {
+        ...course,
+        placeId: `${course.placeId.split('__')[0]}__${comboId}`,
+        name: `${course.name.split('—')[0].trim()} — ${comboName} (27 Holes)`,
+        subCourseId: comboId,
+        subCourseName: comboName,
+        osmSummary: summary,
+        attributions,
+        availableTees: combinedTees.length > 0 ? combinedTees : undefined,
+        selectedTeeId: defaultTee?.id,
+      };
+      onSelectCourse(subCourseInfo, fullGeometry);
+    },
+    [onSelectCourse]
+  );
+
   const handleChooseCourse = useCallback(
     async (course: CourseInfo) => {
       setLoadingCourseId(course.placeId);
@@ -313,20 +366,28 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             });
           }
         } else if (gcaMatches.length >= 2) {
-          for (const gca of gcaMatches) {
-            const defaultTee = pickDefaultTee(gca.tees);
-            const holeCount = defaultTee?.numberOfHoles ?? defaultTee?.holes.length ?? 18;
-            const parTotal =
-              defaultTee?.parTotal ??
-              (defaultTee?.holes.reduce((acc, h) => acc + h.par, 0) || holeCount * 4);
-            loops.push({
-              id: `gca_${gca.id}`,
-              name: gca.courseName || gca.displayName,
-              holeCount,
-              parTotal,
-              yardageTotal: defaultTee?.totalYards,
-              gcaDetail: gca,
-            });
+          // Multiple courses at the SAME facility: ensure they are within 4000m of the selected course location
+          const localGca = gcaMatches.filter((gca) => {
+            if (!safeLocation || !gca.location) return false;
+            return computeDistanceMeters(safeLocation, gca.location) <= 4000;
+          });
+
+          if (localGca.length >= 2) {
+            for (const gca of localGca) {
+              const defaultTee = pickDefaultTee(gca.tees);
+              const holeCount = defaultTee?.numberOfHoles ?? defaultTee?.holes.length ?? 18;
+              const parTotal =
+                defaultTee?.parTotal ??
+                (defaultTee?.holes.reduce((acc, h) => acc + h.par, 0) || holeCount * 4);
+              loops.push({
+                id: `gca_${gca.id}`,
+                name: gca.courseName || gca.displayName,
+                holeCount,
+                parTotal,
+                yardageTotal: defaultTee?.totalYards,
+                gcaDetail: gca,
+              });
+            }
           }
         }
 
@@ -340,12 +401,22 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             setComboFrontId('');
             setComboBackId('');
           }
+          if (nineLoops.length >= 3) {
+            setCombo27Loop1Id(nineLoops[0].id);
+            setCombo27Loop2Id(nineLoops[1].id);
+            setCombo27Loop3Id(nineLoops[2].id);
+          } else {
+            setCombo27Loop1Id('');
+            setCombo27Loop2Id('');
+            setCombo27Loop3Id('');
+          }
           return;
         }
 
         const matchedGca =
           loops[0]?.gcaDetail ??
-          matchSubCourseNameToGca(course.courseName || course.subCourseName, gcaMatches);
+          matchSubCourseNameToGca(course.courseName || course.subCourseName, gcaMatches) ??
+          (gcaMatches.length > 0 ? gcaMatches[0] : null);
         const tees = matchedGca?.tees ?? [];
         const defaultTee = pickDefaultTee(tees);
         const summary = summarizeOsmGeometry(geometry);
@@ -360,7 +431,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
 
         onSelectCourse(
           {
-            ...course,
+            ...safeCourse,
             osmSummary: summary,
             attributions,
             golfCourseApiId: matchedGca?.id ?? course.golfCourseApiId,
@@ -437,35 +508,14 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
     <div className="h-full overflow-y-auto bg-[#F4F7F4] dark:bg-[#07100a]">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6 pb-28">
         {/* Modern Vibrant Hero Banner */}
-        <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900 text-white p-6 sm:p-8 shadow-xl shadow-emerald-950/20">
+        <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900 text-white p-6 sm:p-8 shadow-xl shadow-emerald-950/20 text-center">
           <div className="absolute top-0 right-0 -mt-6 -mr-6 w-48 h-48 rounded-full bg-emerald-500/20 blur-2xl pointer-events-none" />
           <div className="absolute bottom-0 left-1/3 -mb-8 w-40 h-40 rounded-full bg-teal-400/15 blur-xl pointer-events-none" />
 
-          <div className="relative z-10 space-y-3">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-emerald-200 text-xs font-bold uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Smart GPS & NFC Golf Caddie</span>
-            </div>
-
-            <h1 className="font-display text-2xl sm:text-4xl font-black tracking-tight text-white leading-tight">
-              Ready to Tee Off?
+          <div className="relative z-10 flex flex-col items-center justify-center py-2 sm:py-4">
+            <h1 className="font-display text-3xl sm:text-5xl font-black tracking-tight text-white leading-tight">
+              Pocket Caddy
             </h1>
-
-            <p className="text-sm sm:text-base text-emerald-100/90 max-w-xl">
-              Choose your course to launch live GPS distances, automatic NFC club tracking, and interactive OpenStreetMap hole geometry.
-            </p>
-
-            {/* Quick Feature Badges */}
-            <div className="pt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-emerald-100">
-              <span className="px-3 py-1 rounded-xl bg-white/10 backdrop-blur-xs flex items-center gap-1.5 border border-white/10">
-                <Navigation className="w-3.5 h-3.5 text-emerald-300" />
-                Live GPS Auto-Detection
-              </span>
-              <span className="px-3 py-1 rounded-xl bg-white/10 backdrop-blur-xs flex items-center gap-1.5 border border-white/10">
-                <Zap className="w-3.5 h-3.5 text-amber-300" />
-                GolfPad NFC Tag Scanning
-              </span>
-            </div>
           </div>
         </div>
 
@@ -492,56 +542,17 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => void handleNearbySearch()}
                 disabled={isSearching}
-                className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 min-h-[38px] px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 hover:bg-emerald-100 disabled:opacity-50 transition-all whitespace-nowrap shadow-2xs"
+                className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 min-h-[38px] px-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 hover:bg-emerald-100 disabled:opacity-50 transition-all whitespace-nowrap shadow-2xs"
               >
                 <Compass className="w-4 h-4" />
                 <span>{userPosition ? 'Refresh Nearest 10 Courses' : 'Refresh Nearby Courses'}</span>
               </button>
-
-              <button
-                type="button"
-                onClick={() => setShowKeyDetails((v) => !v)}
-                className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white font-medium px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                title="View deployment API key diagnostics"
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    apiStatus?.apiKeyStatus?.configured ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
-                  }`}
-                />
-                <span className="font-mono text-[11px]">
-                  {apiStatus?.apiKeyStatus?.configured
-                    ? `GolfAPI: ${apiStatus.apiKeyStatus.masked}`
-                    : 'GolfAPI Key: Not Set (Diagnostics)'}
-                </span>
-              </button>
             </div>
-
-            {showKeyDetails && (
-              <div className="p-3.5 rounded-2xl bg-slate-900 text-slate-200 text-xs font-mono space-y-1.5 mt-2 border border-slate-800 shadow-xl">
-                <div className="flex items-center justify-between font-sans text-slate-300 font-bold text-[11px] pb-1 border-b border-slate-800">
-                  <span>DEPLOYMENT API KEY DIAGNOSTICS</span>
-                  <span className="text-[10px] text-emerald-400 font-semibold">OpenGolfAPI: ACTIVE</span>
-                </div>
-                <div>Status: {apiStatus?.apiKeyStatus?.configured ? 'CONFIGURED ✓' : 'NOT DETECTED ⚠️'}</div>
-                <div>Source Env Var: {apiStatus?.apiKeyStatus?.source ?? 'None matched'}</div>
-                <div>Masked Key: {apiStatus?.apiKeyStatus?.masked ?? 'None'}</div>
-                <div>Key Length: {apiStatus?.apiKeyStatus?.length ?? 0} characters</div>
-                <div className="text-[10px] text-slate-400 pt-1">
-                  Checked Env Vars: {apiStatus?.apiKeyStatus?.envVarsChecked?.join(', ') || 'GOLFCOURSE_API_KEY, GOLF_API_KEY'}
-                </div>
-                {!apiStatus?.apiKeyStatus?.configured && (
-                  <div className="text-[11px] text-amber-300 pt-1 font-sans">
-                    Tip: Set <code>GOLF_API_KEY</code> or <code>GOLFCOURSE_API_KEY</code> in Cloudflare Pages build variables. OpenGolfAPI keyless fallback remains active.
-                  </div>
-                )}
-              </div>
-            )}
           </form>
 
           {/* Results List */}
@@ -745,6 +756,73 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                                 Play 18 Holes →
                               </button>
                             </div>
+
+                            {/* 27-Hole All-Nines Custom Order Selector */}
+                            {nineLoops.length >= 3 && (() => {
+                              const loop1 = nineLoops.find((s) => s.id === combo27Loop1Id) ?? nineLoops[0];
+                              const loop2 = nineLoops.find((s) => s.id === combo27Loop2Id) ?? nineLoops[1];
+                              const loop3 = nineLoops.find((s) => s.id === combo27Loop3Id) ?? nineLoops[2];
+                              return (
+                                <div className="pt-3 border-t border-emerald-200/70 dark:border-emerald-800/70 space-y-2">
+                                  <div className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
+                                    Or select all 27 holes in your custom order:
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <select
+                                      value={loop1.id}
+                                      onChange={(e) => setCombo27Loop1Id(e.target.value)}
+                                      aria-label="1st 9 loop"
+                                      className="h-10 px-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 text-xs font-bold text-[#0F1A14] dark:text-slate-100"
+                                    >
+                                      {nineLoops.map((loop) => (
+                                        <option key={loop.id} value={loop.id}>
+                                          1st 9: {loop.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      value={loop2.id}
+                                      onChange={(e) => setCombo27Loop2Id(e.target.value)}
+                                      aria-label="2nd 9 loop"
+                                      className="h-10 px-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 text-xs font-bold text-[#0F1A14] dark:text-slate-100"
+                                    >
+                                      {nineLoops.map((loop) => (
+                                        <option key={loop.id} value={loop.id}>
+                                          2nd 9: {loop.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      value={loop3.id}
+                                      onChange={(e) => setCombo27Loop3Id(e.target.value)}
+                                      aria-label="3rd 9 loop"
+                                      className="h-10 px-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 text-xs font-bold text-[#0F1A14] dark:text-slate-100"
+                                    >
+                                      {nineLoops.map((loop) => (
+                                        <option key={loop.id} value={loop.id}>
+                                          3rd 9: {loop.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handlePick27ComboLoops(
+                                          course,
+                                          pendingMultiCourse.geometry,
+                                          loop1,
+                                          loop2,
+                                          loop3
+                                        )
+                                      }
+                                      className="h-10 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold whitespace-nowrap shadow-sm transition-all"
+                                    >
+                                      Play All 27 Holes →
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })()}

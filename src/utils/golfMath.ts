@@ -5,10 +5,12 @@ import {
   HolePinData,
   HoleScoreState,
   LatLngLiteral,
+  RoundHoleMode,
   RoundState,
   ShotDirection,
   ShotLie,
   ShotRecord,
+  OsmCourseGeometry,
 } from '../types/golf';
 
 export interface ClubPreset {
@@ -43,6 +45,86 @@ export const CLUB_PRESETS: ClubPreset[] = [
   { id: 'lw', name: 'Lob Wedge (60°)', shortName: 'LW', category: 'wedge', typicalYards: 74 },
   { id: 'pt', name: 'Putter', shortName: 'PT', category: 'putter', typicalYards: 10 },
 ];
+
+const CATEGORY_ORDER: Record<string, number> = {
+  wood: 1,
+  hybrid: 2,
+  iron: 3,
+  wedge: 4,
+  putter: 5,
+};
+
+export function getClubSortWeight(club: {
+  id?: string;
+  shortName?: string;
+  name?: string;
+  category?: string;
+  typicalYards?: number;
+}): number {
+  if (!club) return 9999;
+  const id = (club.id || '').toLowerCase().trim();
+  const short = (club.shortName || '').toLowerCase().trim();
+  const name = (club.name || '').toLowerCase().trim();
+  const cat = (club.category || '').toLowerCase().trim();
+
+  // 1. If matches preset directly, use preset order
+  const presetIdx = CLUB_PRESETS.findIndex(
+    (p) => p.id === id || p.shortName.toLowerCase() === short || p.name.toLowerCase() === name
+  );
+  if (presetIdx !== -1) {
+    return presetIdx * 10;
+  }
+
+  // 2. Putter is always last
+  if (cat === 'putter' || id === 'pt' || short === 'pt' || name.includes('putt')) {
+    return 5000;
+  }
+
+  const catWeight = (CATEGORY_ORDER[cat] ?? 3) * 1000;
+  const numMatch = (short || name).match(/(\d+)/);
+  const num = numMatch ? parseInt(numMatch[1], 10) : null;
+
+  if (cat === 'wood') {
+    if (name.includes('driver') || short === 'd') return 10;
+    return catWeight + (num ?? 10);
+  }
+
+  if (cat === 'hybrid') {
+    return catWeight + (num ?? 10);
+  }
+
+  if (cat === 'iron') {
+    return catWeight + (num ?? 10);
+  }
+
+  if (cat === 'wedge') {
+    if (short === 'pw' || name.includes('pitching')) return 4000;
+    if (short === 'gw' || short === 'aw' || name.includes('gap') || name.includes('approach')) return 4010;
+    if (short === 'sw' || name.includes('sand')) return 4020;
+    if (short === 'lw' || name.includes('lob')) return 4030;
+    if (num && num >= 40 && num <= 68) {
+      return 4000 + num;
+    }
+    return 4050;
+  }
+
+  return 3000;
+}
+
+export function sortGolfClubs<T extends { id?: string; shortName?: string; name?: string; category?: string; typicalYards?: number }>(
+  clubs: T[]
+): T[] {
+  return [...clubs].sort((a, b) => {
+    const wa = getClubSortWeight(a);
+    const wb = getClubSortWeight(b);
+    if (wa !== wb) return wa - wb;
+    const ya = a.typicalYards ?? 0;
+    const yb = b.typicalYards ?? 0;
+    return yb - ya;
+  });
+}
+
+export const STANDARD_14_CLUB_IDS = ['dr', '3w', '5w', '3i', '4i', '5i', '6i', '7i', '8i', '9i', 'pw', 'gw', 'sw', 'pt'];
 
 export const DEFAULT_CLUB_BAG: Club[] = [];
 
@@ -483,8 +565,11 @@ export function createInitialRoundState(course: RoundState['course'] = null): Ro
   const holes: Record<number, HolePinData> = {};
   const scores: Record<number, HoleScoreState> = {};
 
-  for (let i = 1; i <= 18; i += 1) {
-    const layout = DEFAULT_PAR_LAYOUT[i - 1];
+  const selectedTee = course?.availableTees?.find((t) => t.id === course.selectedTeeId);
+  const totalHoles = Math.max(18, selectedTee?.numberOfHoles || 0, selectedTee?.holes.length || 0);
+
+  for (let i = 1; i <= totalHoles; i += 1) {
+    const layout = DEFAULT_PAR_LAYOUT[(i - 1) % DEFAULT_PAR_LAYOUT.length];
     holes[i] = {
       holeNumber: i,
       par: layout.par,
@@ -506,9 +591,104 @@ export function createInitialRoundState(course: RoundState['course'] = null): Ro
     updatedAt: Date.now(),
     unit: 'yards',
     currentHole: 1,
+    holeMode: totalHoles >= 27 ? 'all27' : '18',
     holes,
     scores,
   };
+}
+
+export function isClubHigherThanPW(club: {
+  clubId?: string;
+  clubName?: string;
+  clubShortName?: string;
+  id?: string;
+  name?: string;
+  shortName?: string;
+  category?: string;
+} | null | undefined): boolean {
+  if (!club) return false;
+  if (isPutterClub(club)) return false;
+
+  const cat = (club.category || '').toLowerCase();
+  if (cat === 'wood' || cat === 'hybrid') return true;
+  if (cat === 'wedge') return false;
+
+  const id = (club.id || club.clubId || '').toLowerCase().trim();
+  const shortName = (club.shortName || club.clubShortName || '').toLowerCase().trim();
+  const name = (club.name || club.clubName || '').toLowerCase().trim();
+
+  // Driver / Wood / Hybrid checks
+  if (id === 'dr' || id.startsWith('dr') || id.includes('driver') || name.includes('driver') || shortName === 'd') return true;
+  if (id.endsWith('w') || name.includes('wood') || /^[1-9]w$/i.test(shortName)) return true;
+  if (id.endsWith('h') || name.includes('hybrid') || /^[1-9]h$/i.test(shortName)) return true;
+
+  // Wedges: PW, GW, AW, SW, LW, etc.
+  if (['pw', 'gw', 'aw', 'sw', 'lw'].includes(id) || ['pw', 'gw', 'aw', 'sw', 'lw'].includes(shortName)) return false;
+  if (name.includes('wedge') || name.includes('pitching') || name.includes('gap') || name.includes('approach') || name.includes('sand') || name.includes('lob')) return false;
+
+  // Irons 1 through 9
+  if (/^[1-9]i?$/i.test(shortName) || /^[1-9]i$/i.test(id)) return true;
+  if (/\b[1-9]\s*(iron|i)\b/i.test(name) || /^[1-9]\s*iron/i.test(name)) return true;
+  if (cat === 'iron') {
+    const numMatch = name.match(/(\d+)/);
+    if (numMatch) {
+      const num = parseInt(numMatch[1], 10);
+      if (num >= 1 && num <= 9) return true;
+    }
+  }
+
+  return false;
+}
+
+export function recalculateClubAverages(
+  bag: Club[],
+  rounds: RoundState[]
+): Club[] {
+  const clubDistances: Record<string, number[]> = {};
+
+  for (const r of rounds) {
+    if (!r || !r.scores) continue;
+    for (const score of Object.values(r.scores)) {
+      if (!score || !score.shots) continue;
+      for (const s of score.shots) {
+        if (s.isPutt || s.isPuttManualOverride) continue;
+        const d = s.distanceYards;
+        // Strictly filter to realistic golf shot distances (15 to 450 yards)
+        // Discard GPS cross-country test jumps or corrupt data (> 450 yards)
+        if (typeof d === 'number' && d > 15 && d <= 450) {
+          const idKey = (s.clubId || '').toLowerCase().trim();
+          const shortKey = (s.clubShortName || '').toLowerCase().trim();
+          const nameKey = (s.clubName || '').toLowerCase().trim();
+          [idKey, shortKey, nameKey].filter(Boolean).forEach((k) => {
+            clubDistances[k] = clubDistances[k] || [];
+            clubDistances[k].push(d);
+          });
+        }
+      }
+    }
+  }
+
+  return bag.map((club) => {
+    const idKey = club.id.toLowerCase().trim();
+    const shortKey = club.shortName.toLowerCase().trim();
+    const nameKey = club.name.toLowerCase().trim();
+    const distances = clubDistances[idKey] || clubDistances[shortKey] || clubDistances[nameKey];
+
+    if (distances && distances.length > 0) {
+      const avg = Math.round(distances.reduce((sum, d) => sum + d, 0) / distances.length);
+      // Ensure average is strictly capped at 3 digits (max 999)
+      const sanitizedAvg = Math.min(999, Math.max(0, avg));
+      return { ...club, typicalYards: sanitizedAvg };
+    }
+
+    // Sanitize any existing corrupted test values (> 999 yards) in the user's bag
+    if (typeof club.typicalYards !== 'number' || isNaN(club.typicalYards) || club.typicalYards > 999) {
+      const preset = CLUB_PRESETS.find((p) => p.id === club.id);
+      return { ...club, typicalYards: preset?.typicalYards ?? 150 };
+    }
+
+    return club;
+  });
 }
 
 export function isPutterClub(club: {
@@ -686,4 +866,94 @@ export function getScoreLabel(strokes: number, par: number): string {
   if (diff === 1) return 'Bogey';
   if (diff === 2) return 'Double';
   return `+${diff}`;
+}
+
+/**
+ * Determines whether a user's GPS coordinates are physically located at the golf course.
+ * If user is off-course (> 900m from any hole/green/tee, > 1400m from course center),
+ * the app cleanly falls back to the selected hole's tee position.
+ */
+export function isUserAtGolfCourse(
+  userPos: LatLngLiteral | null | undefined,
+  courseLocation?: LatLngLiteral | null,
+  courseGeometry?: OsmCourseGeometry | null,
+  holes?: Record<number, HolePinData> | null
+): boolean {
+  if (!userPos) return false;
+
+  // 1. Proximity to any mapped hole tee or green in the round (< 900m)
+  if (holes) {
+    for (const h of Object.values(holes)) {
+      if (h.teeLatLng && computeDistanceMeters(userPos, h.teeLatLng) <= 900) return true;
+      if (h.greenCenterLatLng && computeDistanceMeters(userPos, h.greenCenterLatLng) <= 900) return true;
+    }
+  }
+
+  // 2. Proximity to any hole, green, or tee in OSM geometry (< 900m)
+  if (courseGeometry) {
+    for (const h of courseGeometry.holes) {
+      if (h.teeLatLng && computeDistanceMeters(userPos, h.teeLatLng) <= 900) return true;
+      if (h.greenCenterLatLng && computeDistanceMeters(userPos, h.greenCenterLatLng) <= 900) return true;
+    }
+    for (const g of courseGeometry.greens) {
+      if (computeDistanceMeters(userPos, g.center) <= 900) return true;
+    }
+    for (const t of courseGeometry.tees) {
+      if (computeDistanceMeters(userPos, t.center) <= 900) return true;
+    }
+  }
+
+  // 3. Proximity to course center location (< 1400m)
+  if (courseLocation) {
+    if (computeDistanceMeters(userPos, courseLocation) <= 1400) return true;
+  }
+
+  return false;
+}
+
+
+export function getNextHoleNumber(
+  currentHole: number,
+  mode: RoundHoleMode = '18',
+  totalHoles: number = 18
+): number {
+  if (mode === 'front9') {
+    if (currentHole < 1 || currentHole >= 9) return 1;
+    return currentHole + 1;
+  }
+  if (mode === 'back9') {
+    if (currentHole < 10 || currentHole >= 18) return 10;
+    return currentHole + 1;
+  }
+  if (mode === 'all27') {
+    const max = Math.max(27, totalHoles);
+    if (currentHole < 1 || currentHole >= max) return 1;
+    return currentHole + 1;
+  }
+  const max = mode === '18' ? 18 : totalHoles > 0 ? totalHoles : 18;
+  if (currentHole < 1 || currentHole >= max) return 1;
+  return currentHole + 1;
+}
+
+export function getPrevHoleNumber(
+  currentHole: number,
+  mode: RoundHoleMode = '18',
+  totalHoles: number = 18
+): number {
+  if (mode === 'front9') {
+    if (currentHole <= 1 || currentHole > 9) return 9;
+    return currentHole - 1;
+  }
+  if (mode === 'back9') {
+    if (currentHole <= 10 || currentHole > 18) return 18;
+    return currentHole - 1;
+  }
+  if (mode === 'all27') {
+    const max = Math.max(27, totalHoles);
+    if (currentHole <= 1 || currentHole > max) return max;
+    return currentHole - 1;
+  }
+  const max = mode === '18' ? 18 : totalHoles > 0 ? totalHoles : 18;
+  if (currentHole <= 1 || currentHole > max) return max;
+  return currentHole - 1;
 }

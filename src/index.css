@@ -122,7 +122,18 @@ html.dark .glass-card {
 }
 
 /* Override Leaflet default div-icon background & border */
-.caddieline-div-icon {
-  background: transparent;
-  border: none;
+.leaflet-div-icon,
+.custom-leaflet-badge,
+.caddieline-div-icon,
+.ball-position-marker {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Prevent any element or badge from overflowing screen horizontally */
+html, body, #root {
+  max-width: 100vw;
+  overflow-x: hidden;
 }

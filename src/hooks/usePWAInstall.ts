@@ -13,7 +13,14 @@ export function usePWAInstall() {
   const [isInIframe, setIsInIframe] = useState(false);
 
   useEffect(() => {
+    const isNativeCapacitor =
+      typeof window !== 'undefined' &&
+      (Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()) ||
+        window.location.protocol === 'capacitor:' ||
+        window.location.hostname === 'localhost');
+
     const isStandalone =
+      isNativeCapacitor ||
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
     setIsInstalled(isStandalone);

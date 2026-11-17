@@ -2,21 +2,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  BarChart3,
+  AlertCircle,
+  AlertTriangle,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
+  Compass,
   Crosshair,
   Flag,
   Layers,
-  LocateFixed,
   MapPin,
-  Navigation,
   RefreshCw,
   Search,
-  Trash2,
-  UserCheck,
+  Sliders,
+  Sparkles,
 } from 'lucide-react';
 import {
   Club,
@@ -30,6 +29,7 @@ import {
   MapTapMode,
   OsmCourseGeometry,
   OsmPolygonFeature,
+  RoundHoleMode,
   ShotRecord,
 } from '../types/golf';
 import {
@@ -37,44 +37,42 @@ import {
   computeDistanceYards,
   computePolygonFrontCenterBack,
   formatDistanceValue,
-  getHoleStrokes,
+  getNextHoleNumber,
+  getPrevHoleNumber,
   getLieMeta,
   isHazardInPlayCorridor,
   recommendClub,
   unitSuffix,
 } from '../utils/golfMath';
-import { GpsStatus } from '../hooks/useGeolocation';
 
 interface OpenGolfHoleMapProps {
   course: CourseInfo | null;
   courseGeometry: OsmCourseGeometry | null;
-  isLoadingGeometry: boolean;
-  geometryError: string | null;
+  isLoadingGeometry?: boolean;
+  geometryError?: string | null;
   holeData: HolePinData;
   allHoles: Record<number, HolePinData>;
   allScores: Record<number, HoleScoreState>;
   shots: ShotRecord[];
   unit: DistanceUnit;
+  holeMode?: RoundHoleMode;
+  onToggleHoleMode?: (mode: RoundHoleMode) => void;
   bag: Club[];
   playerPosition: LatLngLiteral | null;
-  gpsStatus: GpsStatus;
-  gpsAccuracyMeters: number | null;
-  isManualPosition: boolean;
+  gpsStatus?: string;
+  gpsAccuracyMeters?: number | null;
+  isManualPosition?: boolean;
   tapMode: MapTapMode;
   targetPin: LatLngLiteral | null;
   onSelectHole: (holeNumber: number) => void;
   onChangeTapMode: (mode: MapTapMode) => void;
-  onSetTargetPin: (pos: LatLngLiteral | null) => void;
+  onSetTargetPin: (pin: LatLngLiteral | null) => void;
   onSetManualPlayerPos: (pos: LatLngLiteral) => void;
   onResumeLiveGps: () => void;
   onUpdateHolePins: (patch: Partial<HolePinData>) => void;
-  onQuickLogFromMap: (
-    endLatLng: LatLngLiteral,
-    startLatLng: LatLngLiteral | null,
-    yards: number | null
-  ) => void;
+  onQuickLogFromMap: (pin: LatLngLiteral, startOrigin?: LatLngLiteral | null, distanceYards?: number | null) => void;
   onOpenCourseSearch?: () => void;
-  onRefreshOsmCourse: () => void;
+  onRefreshOsmCourse?: () => void;
   onFlipToStats?: () => void;
 }
 
@@ -86,19 +84,18 @@ interface ComputedHazardDistance {
   clearYards: number | null;
   frontPoint: LatLngLiteral;
   backPoint: LatLngLiteral;
-  center: LatLngLiteral;
-  polygon?: LatLngLiteral[];
+  center?: LatLngLiteral;
 }
 
-const DEFAULT_MAP_CENTER: LatLngLiteral = { lat: 36.5683, lng: -121.9506 }; // Pebble Beach default fallback
+const DEFAULT_MAP_CENTER: LatLngLiteral = { lat: 44.9778, lng: -93.265 }; // Default fallback
 
-function toLatLngTuples(pts: LatLngLiteral[]): L.LatLngTuple[] {
-  return pts.map((p) => [p.lat, p.lng] as L.LatLngTuple);
+function toLatLngTuples(points: LatLngLiteral[]): L.LatLngTuple[] {
+  return points.map((p) => [p.lat, p.lng]);
 }
 
 function createBadgeIcon(html: string, size: [number, number], anchor: [number, number]): L.DivIcon {
   return L.divIcon({
-    className: 'caddieline-div-icon',
+    className: 'custom-leaflet-badge',
     html,
     iconSize: size,
     iconAnchor: anchor,
@@ -108,18 +105,20 @@ function createBadgeIcon(html: string, size: [number, number], anchor: [number, 
 export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   course,
   courseGeometry,
-  isLoadingGeometry,
-  geometryError,
+  isLoadingGeometry = false,
+  geometryError = null,
   holeData,
   allHoles,
   allScores,
   shots,
   unit,
+  holeMode = '18',
+  onToggleHoleMode,
   bag,
   playerPosition,
   gpsStatus,
   gpsAccuracyMeters,
-  isManualPosition,
+  isManualPosition = false,
   tapMode,
   targetPin,
   onSelectHole,
@@ -140,31 +139,48 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   const vectorsLayerRef = useRef<L.LayerGroup | null>(null);
   const linesLayerRef = useRef<L.LayerGroup | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const targetLineFromOriginRef = useRef<L.Polyline | null>(null);
+  const targetLineToGreenRef = useRef<L.Polyline | null>(null);
+  const targetMarkerRef = useRef<L.Marker | null>(null);
+  const isDraggingTargetRef = useRef<boolean>(false);
 
   const [baseLayer, setBaseLayer] = useState<'satellite' | 'osm'>('satellite');
   const [hazardType, setHazardType] = useState<HazardPinType>('bunker');
   const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null);
+  const [isHazardsMenuOpen, setIsHazardsMenuOpen] = useState<boolean>(false);
   const [hazardsExpanded, setHazardsExpanded] = useState<boolean>(true);
   const [isHolePickerOpen, setIsHolePickerOpen] = useState<boolean>(false);
+  const suffix = unitSuffix(unit);
   const lastFitKeyRef = useRef<string>('');
 
   const tapModeRef = useRef(tapMode);
   tapModeRef.current = tapMode;
 
-  // Determine if real GPS is far away from the loaded course (> 5km) so remote viewing defaults cleanly to the course
+  const currentOsmHole = useMemo(
+    () => courseGeometry?.holes.find((h) => h.holeNumber === holeData.holeNumber) ?? null,
+    [courseGeometry, holeData.holeNumber]
+  );
+
+  const activeTeeLatLng = useMemo(
+    () => holeData.teeLatLng ?? currentOsmHole?.teeLatLng ?? null,
+    [holeData.teeLatLng, currentOsmHole?.teeLatLng]
+  );
+
+  // Determine if real GPS is off-course (> 1200m from course) so remote viewing defaults cleanly to the course
   const isGpsOffCourse = useMemo(() => {
     if (!playerPosition || isManualPosition) return false;
-    const refPoint = holeData.greenCenterLatLng ?? holeData.teeLatLng ?? course?.location;
+    const refPoint = activeTeeLatLng ?? holeData.greenCenterLatLng ?? course?.location;
     if (!refPoint) return false;
-    return computeDistanceMeters(playerPosition, refPoint) > 5000;
-  }, [playerPosition, isManualPosition, holeData.greenCenterLatLng, holeData.teeLatLng, course?.location]);
+    return computeDistanceMeters(playerPosition, refPoint) > 1200;
+  }, [playerPosition, isManualPosition, activeTeeLatLng, holeData.greenCenterLatLng, course?.location]);
 
   // "Where I am standing" origin for all live green/bunker/water yardages
   const effectiveOrigin: LatLngLiteral | null = useMemo(() => {
     if (isManualPosition && playerPosition) return playerPosition;
     const lastShotWithEnd = [...shots].reverse().find((s) => s.endLatLng);
-    if (playerPosition && !isGpsOffCourse) return playerPosition;
     if (lastShotWithEnd?.endLatLng) return lastShotWithEnd.endLatLng;
+    if (playerPosition && !isGpsOffCourse) return playerPosition;
+    if (activeTeeLatLng) return activeTeeLatLng;
     if (holeData.teeLatLng) return holeData.teeLatLng;
     if (playerPosition) return playerPosition;
     return course?.location ?? null;
@@ -173,6 +189,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     playerPosition,
     isGpsOffCourse,
     shots,
+    activeTeeLatLng,
     holeData.teeLatLng,
     course?.location,
   ]);
@@ -193,6 +210,14 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
         return {
           activeGreenPolygon: holeGreen.polygon,
           activeGreenCenter: holeData.greenCenterLatLng ?? holeGreen.center,
+          isNearestFallbackGreen: false,
+        };
+      }
+
+      if (currentOsmHole?.greenCenterLatLng) {
+        return {
+          activeGreenPolygon: undefined,
+          activeGreenCenter: currentOsmHole.greenCenterLatLng,
           isNearestFallbackGreen: false,
         };
       }
@@ -220,10 +245,10 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
 
     return {
       activeGreenPolygon: undefined,
-      activeGreenCenter: holeData.greenCenterLatLng,
+      activeGreenCenter: holeData.greenCenterLatLng ?? currentOsmHole?.greenCenterLatLng,
       isNearestFallbackGreen: false,
     };
-  }, [holeData.greenPolygon, holeData.greenCenterLatLng, holeData.holeNumber, courseGeometry, effectiveOrigin]);
+  }, [holeData.greenPolygon, holeData.greenCenterLatLng, holeData.holeNumber, courseGeometry, currentOsmHole, effectiveOrigin]);
 
   // Dynamic Front / Center / Back green distances from where player is standing
   const greenMetrics = useMemo(() => {
@@ -296,14 +321,13 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
           frontPoint: polyRes.frontPoint,
           backPoint: polyRes.backPoint,
           center: haz.center,
-          polygon: haz.polygon,
         });
       }
     }
 
-    // Include custom manual hazard pins
     for (const pin of holeData.hazards) {
       const dist = computeDistanceYards(effectiveOrigin, pin.latLng);
+      if (dist > 420) continue;
       items.push({
         id: pin.id,
         kind: 'manual',
@@ -333,10 +357,11 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   const measureOrigin: LatLngLiteral | null = useMemo(() => {
     if (isPlayerOnCourse && playerPosition) return playerPosition;
     if (isManualPosition && playerPosition) return playerPosition;
+    if (activeTeeLatLng) return activeTeeLatLng;
     if (holeData.teeLatLng) return holeData.teeLatLng;
     if (playerPosition) return playerPosition;
     return course?.location ?? null;
-  }, [isPlayerOnCourse, playerPosition, isManualPosition, holeData.teeLatLng, course?.location]);
+  }, [isPlayerOnCourse, playerPosition, isManualPosition, activeTeeLatLng, holeData.teeLatLng, course?.location]);
 
   const distToTarget = useMemo(() => {
     if (!measureOrigin || !targetPin) return null;
@@ -356,6 +381,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
   // Refs for latest callbacks inside Leaflet event handlers
   const handleMapClickRef = useRef<(latLng: LatLngLiteral) => void>(() => {});
   handleMapClickRef.current = (clicked: LatLngLiteral) => {
+    if (isDraggingTargetRef.current) return;
     switch (tapModeRef.current) {
       case 'measure':
         onSetTargetPin(clicked);
@@ -413,12 +439,14 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     if (!mapContainerRef.current || mapRef.current) return;
 
     const initial =
-      holeData.teeLatLng ?? activeGreenCenter ?? course?.location ?? DEFAULT_MAP_CENTER;
+      activeTeeLatLng ?? holeData.teeLatLng ?? activeGreenCenter ?? course?.location ?? DEFAULT_MAP_CENTER;
     const map = L.map(mapContainerRef.current, {
       center: [initial.lat, initial.lng],
-      zoom: holeData.teeLatLng || activeGreenCenter ? 17 : course ? 16 : 5,
+      zoom: activeTeeLatLng || holeData.teeLatLng || activeGreenCenter ? 17 : course ? 16 : 5,
       zoomControl: false,
       attributionControl: true,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
     });
 
     const satLayer = L.tileLayer(
@@ -478,10 +506,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     }
   }, [baseLayer]);
 
-  const currentOsmHole = useMemo(
-    () => courseGeometry?.holes.find((h) => h.holeNumber === holeData.holeNumber) ?? null,
-    [courseGeometry, holeData.holeNumber]
-  );
+
 
   // Fit bounds tightly to ONLY the selected hole (tee, dogleg path, green polygon, and hole hazards)
   const fitMapToCurrentHole = useCallback(() => {
@@ -490,7 +515,9 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     map.invalidateSize({ pan: false });
 
     const holePoints: L.LatLngTuple[] = [];
-    if (holeData.teeLatLng) {
+    if (activeTeeLatLng) {
+      holePoints.push([activeTeeLatLng.lat, activeTeeLatLng.lng]);
+    } else if (holeData.teeLatLng) {
       holePoints.push([holeData.teeLatLng.lat, holeData.teeLatLng.lng]);
     }
     if (currentOsmHole?.path) {
@@ -506,22 +533,12 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
         holePoints.push([p.lat, p.lng]);
       }
     }
-    if (courseGeometry) {
-      for (const haz of [...courseGeometry.bunkers, ...courseGeometry.waters]) {
-        if (haz.holeNumber === holeData.holeNumber) {
-          holePoints.push([haz.center.lat, haz.center.lng]);
-        }
-      }
-    }
-
     if (holePoints.length >= 2) {
       const bounds = L.latLngBounds(holePoints);
-      map.fitBounds(bounds, {
-        paddingTopLeft: [48, 76],
-        paddingBottomRight: [48, 88],
-        maxZoom: 19,
-        animate: true,
-      });
+      const center = bounds.getCenter();
+      const boundsZoom = map.getBoundsZoom(bounds, false, L.point(16, 66));
+      const targetZoom = Math.min(19.5, Math.round((boundsZoom + 0.6) * 4) / 4);
+      map.setView(center, targetZoom, { animate: true });
       return;
     }
 
@@ -547,6 +564,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       map.setView([playerPosition.lat, playerPosition.lng], 17);
     }
   }, [
+    activeTeeLatLng,
     holeData.teeLatLng,
     holeData.holeNumber,
     currentOsmHole,
@@ -557,23 +575,20 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     playerPosition,
   ]);
 
+  // Automatically center and zoom to the active hole whenever the hole changes
   useEffect(() => {
     setSelectedHazardId(null);
-    const fitKey = `${course?.placeId ?? 'none'}_${holeData.holeNumber}_${Boolean(
-      holeData.teeLatLng
-    )}_${Boolean(activeGreenCenter)}_${courseGeometry?.fetchedAt ?? 0}`;
-    if (lastFitKeyRef.current !== fitKey) {
-      lastFitKeyRef.current = fitKey;
+    fitMapToCurrentHole();
+    const timer = setTimeout(() => {
       fitMapToCurrentHole();
-      const raf = requestAnimationFrame(() => fitMapToCurrentHole());
-      return () => cancelAnimationFrame(raf);
-    }
+    }, 60);
+    return () => clearTimeout(timer);
   }, [
-    course?.placeId,
     holeData.holeNumber,
-    holeData.teeLatLng,
-    activeGreenCenter,
+    course?.placeId,
     courseGeometry?.fetchedAt,
+    activeTeeLatLng,
+    activeGreenCenter,
     fitMapToCurrentHole,
   ]);
 
@@ -627,21 +642,21 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
           const res = computePolygonFrontCenterBack(effectiveOrigin, w.polygon, w.center);
           if (res && res.frontYards <= 450) {
             poly.bindTooltip(
-              `${w.label}: ${formatDistanceValue(res.frontYards, unit)} carry · ${formatDistanceValue(res.backYards, unit)} clear ${unitSuffix(unit)}`,
-              { sticky: true, direction: 'top' }
+              `<div style="font-family:monospace;font-size:11px;font-weight:700;color:#0369A1;">${w.label || 'Water'}: ${formatDistanceValue(res.frontYards, unit)}${suffix}</div>`,
+              { sticky: true, direction: 'center', opacity: 0.92 }
             );
           }
         }
       }
 
-      // 4. Sand bunkers
+      // 4. Sand Bunkers
       for (const b of courseGeometry.bunkers) {
         const isSel = b.id === selectedHazardId;
         const poly = L.polygon(toLatLngTuples(b.polygon), {
-          color: isSel ? '#FFFFFF' : '#F59E0B',
-          weight: isSel ? 2.5 : 1.5,
-          fillColor: '#FDE68A',
-          fillOpacity: isSel ? 0.7 : 0.48,
+          color: isSel ? '#FFFFFF' : '#FCD34D',
+          weight: isSel ? 2.5 : 1.25,
+          fillColor: '#F59E0B',
+          fillOpacity: isSel ? 0.65 : 0.42,
         }).addTo(layer);
 
         poly.on('click', (e) => {
@@ -651,151 +666,138 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
 
         if (effectiveOrigin) {
           const res = computePolygonFrontCenterBack(effectiveOrigin, b.polygon, b.center);
-          if (res && res.frontYards <= 450) {
+          if (res && res.frontYards <= 420) {
             poly.bindTooltip(
-              `${b.label}: ${formatDistanceValue(res.frontYards, unit)}–${formatDistanceValue(res.backYards, unit)} ${unitSuffix(unit)}`,
-              { sticky: true, direction: 'top' }
+              `<div style="font-family:monospace;font-size:11px;font-weight:700;color:#78350F;">${b.label || 'Bunker'}: ${formatDistanceValue(res.frontYards, unit)}${suffix}</div>`,
+              { sticky: true, direction: 'center', opacity: 0.92 }
             );
           }
         }
       }
 
-      // 5. Greens
+      // 5. Greens (Hole Green vs Other Greens)
       for (const g of courseGeometry.greens) {
-        const isCurrent = g.holeNumber === holeData.holeNumber;
+        const isCurrentHoleGreen = g.holeNumber === holeData.holeNumber;
         const poly = L.polygon(toLatLngTuples(g.polygon), {
-          color: isCurrent ? '#FFFFFF' : '#86EFAC',
-          weight: isCurrent ? 2.5 : 1.5,
+          color: isCurrentHoleGreen ? '#4ADE80' : '#86EFAC',
+          weight: isCurrentHoleGreen ? 2.5 : 1,
+          opacity: isCurrentHoleGreen ? 0.95 : 0.45,
           fillColor: '#22C55E',
-          fillOpacity: isCurrent ? 0.42 : 0.28,
+          fillOpacity: isCurrentHoleGreen ? 0.45 : 0.18,
         }).addTo(layer);
 
-        poly.on('click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          if (tapModeRef.current === 'measure') {
-            // Let player assign this green to the current hole if unmapped
-            if (!isCurrent && g.holeNumber === undefined) {
-              onUpdateHolePins({ greenCenterLatLng: g.center, greenPolygon: g.polygon });
-            } else {
-              onSetTargetPin({ lat: e.latlng.lat, lng: e.latlng.lng });
-            }
+        poly.on('click', () => {
+          if (g.holeNumber && g.holeNumber !== holeData.holeNumber) {
+            onSelectHole(g.holeNumber);
           } else {
-            handleMapClickRef.current({ lat: e.latlng.lat, lng: e.latlng.lng });
+            onSetTargetPin(g.center);
           }
         });
       }
-    } else if (activeGreenPolygon && activeGreenPolygon.length >= 3) {
-      L.polygon(toLatLngTuples(activeGreenPolygon), {
-        color: '#FFFFFF',
-        weight: 2,
-        fillColor: '#22C55E',
-        fillOpacity: 0.38,
-      }).addTo(layer);
     }
 
-    // Current hole centerline (follows OSM dogleg path when available)
-    if (currentOsmHole?.path && currentOsmHole.path.length >= 2) {
-      L.polyline(toLatLngTuples(currentOsmHole.path), {
-        color: '#FFFFFF',
-        weight: 1.75,
-        opacity: 0.5,
-        dashArray: '6 6',
-        interactive: false,
+    // Custom user green polygon override for this hole
+    if (holeData.greenPolygon && holeData.greenPolygon.length >= 3) {
+      L.polygon(toLatLngTuples(holeData.greenPolygon), {
+        color: '#22C55E',
+        weight: 2.5,
+        fillColor: '#16A34A',
+        fillOpacity: 0.42,
       }).addTo(layer);
-    } else if (holeData.teeLatLng && activeGreenCenter) {
-      L.polyline(
-        [
-          [holeData.teeLatLng.lat, holeData.teeLatLng.lng],
-          [activeGreenCenter.lat, activeGreenCenter.lng],
-        ],
-        {
-          color: '#FFFFFF',
-          weight: 1.5,
-          opacity: 0.45,
-          dashArray: '6 6',
-          interactive: false,
-        }
-      ).addTo(layer);
     }
   }, [
     courseGeometry,
-    currentOsmHole,
-    activeGreenPolygon,
-    activeGreenCenter,
     holeData.holeNumber,
-    holeData.teeLatLng,
+    holeData.greenPolygon,
     selectedHazardId,
     effectiveOrigin,
     unit,
+    suffix,
+    onSelectHole,
     onSetTargetPin,
-    onUpdateHolePins,
   ]);
 
-  // Render measurement lines & shot trails
+  // Render connecting lines (Hole centerline, Shot history, Measurement lines)
   useEffect(() => {
     const layer = linesLayerRef.current;
     if (!layer) return;
     layer.clearLayers();
+    targetLineFromOriginRef.current = null;
+    targetLineToGreenRef.current = null;
 
-    // Shot path
-    const shotPathCoords: [number, number][] = [];
-    if (holeData.teeLatLng && shots.some((s) => s.endLatLng)) {
-      shotPathCoords.push([holeData.teeLatLng.lat, holeData.teeLatLng.lng]);
+    // 1. Hole Guide Centerline: Tee -> Doglegs -> Green
+    const guidePoints: L.LatLngTuple[] = [];
+    if (activeTeeLatLng) guidePoints.push([activeTeeLatLng.lat, activeTeeLatLng.lng]);
+    if (currentOsmHole?.path && currentOsmHole.path.length > 0) {
+      for (const p of currentOsmHole.path) guidePoints.push([p.lat, p.lng]);
     }
-    shots.forEach((s) => {
-      if (s.startLatLng && shotPathCoords.length === 0) {
-        shotPathCoords.push([s.startLatLng.lat, s.startLatLng.lng]);
-      }
-      if (s.endLatLng) {
-        shotPathCoords.push([s.endLatLng.lat, s.endLatLng.lng]);
-      }
-    });
-    if (shotPathCoords.length >= 2) {
-      L.polyline(shotPathCoords, {
-        color: '#10B981',
-        weight: 3,
-        opacity: 0.95,
+    if (activeGreenCenter) guidePoints.push([activeGreenCenter.lat, activeGreenCenter.lng]);
+
+    if (guidePoints.length >= 2) {
+      L.polyline(guidePoints, {
+        color: '#E2E8F0',
+        weight: 1.5,
+        dashArray: '3 6',
+        opacity: 0.35,
+        interactive: false,
       }).addTo(layer);
     }
 
-    // Target reticle lines (when measuring)
-    if (measureOrigin && targetPin) {
-      // Line from player's location (or tee if off-course) to clicked target point
-      L.polyline(
+    // 2. Shot History Polylines (Tee -> Shot 1 -> Shot 2 ...)
+    const shotHistoryPoints: L.LatLngTuple[] = [];
+    if (activeTeeLatLng) shotHistoryPoints.push([activeTeeLatLng.lat, activeTeeLatLng.lng]);
+    for (const shot of shots) {
+      if (shot.endLatLng) {
+        shotHistoryPoints.push([shot.endLatLng.lat, shot.endLatLng.lng]);
+      }
+    }
+    if (shotHistoryPoints.length >= 2) {
+      L.polyline(shotHistoryPoints, {
+        color: '#38BDF8',
+        weight: 2.5,
+        opacity: 0.85,
+        interactive: false,
+      }).addTo(layer);
+    }
+
+    // 3. Target Reticle Measurement Lines
+    // Line A: Origin (standing ball or tee) -> Target Reticle
+    if (targetPin && measureOrigin) {
+      targetLineFromOriginRef.current = L.polyline(
         [
           [measureOrigin.lat, measureOrigin.lng],
           [targetPin.lat, targetPin.lng],
         ],
-        { color: '#FFFFFF', weight: 2.5, opacity: 0.95 }
-      ).addTo(layer);
-
-      // Line from clicked point to green
-      if (activeGreenCenter) {
-        L.polyline(
-          [
-            [targetPin.lat, targetPin.lng],
-            [activeGreenCenter.lat, activeGreenCenter.lng],
-          ],
-          { color: '#FBBF24', weight: 2.5, opacity: 0.95 }
-        ).addTo(layer);
-      }
-    } else if (holeData.teeLatLng && activeGreenCenter) {
-      // Direct line from Tee to Green:
-      // "When setting the Tee, don't keep tying it to my physical location. Just have a line from the tee to the green."
-      L.polyline(
-        [
-          [holeData.teeLatLng.lat, holeData.teeLatLng.lng],
-          [activeGreenCenter.lat, activeGreenCenter.lng],
-        ],
-        { color: '#34D399', weight: 2.2, opacity: 0.85 }
+        {
+          color: '#FCD34D',
+          weight: 2.5,
+          dashArray: '6 4',
+          opacity: 0.95,
+        }
       ).addTo(layer);
     }
 
-    // Highlighted hazard carry line
-    if (effectiveOrigin && selectedHazard) {
+    // Line B: Target Reticle -> Green Center
+    if (targetPin && activeGreenCenter) {
+      targetLineToGreenRef.current = L.polyline(
+        [
+          [targetPin.lat, targetPin.lng],
+          [activeGreenCenter.lat, activeGreenCenter.lng],
+        ],
+        {
+          color: '#4ADE80',
+          weight: 2,
+          dashArray: '4 4',
+          opacity: 0.85,
+        }
+      ).addTo(layer);
+    }
+
+    // 4. Line from Origin -> Selected Hazard front point
+    if (selectedHazard && measureOrigin) {
       L.polyline(
         [
-          [effectiveOrigin.lat, effectiveOrigin.lng],
+          [measureOrigin.lat, measureOrigin.lng],
           [selectedHazard.frontPoint.lat, selectedHazard.frontPoint.lng],
         ],
         {
@@ -807,7 +809,9 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       ).addTo(layer);
     }
   }, [
+    activeTeeLatLng,
     holeData.teeLatLng,
+    currentOsmHole?.path,
     shots,
     measureOrigin,
     targetPin,
@@ -815,16 +819,51 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     selectedHazard,
   ]);
 
+  const handleResetToDefaults = useCallback(() => {
+    // Reset hole pins (tee, green center/front/back) to official OSM defaults
+    const osmGreen = courseGeometry?.greens.find((g) => g.holeNumber === holeData.holeNumber);
+    const greenCenter = currentOsmHole?.greenCenterLatLng ?? osmGreen?.center;
+    const tee = currentOsmHole?.teeLatLng;
+    onUpdateHolePins({
+      teeLatLng: tee,
+      greenCenterLatLng: greenCenter,
+      greenFrontLatLng: undefined,
+      greenBackLatLng: undefined,
+    });
+    // Clear manual target pin
+    onSetTargetPin(null);
+    // Reset manual ball position / resume live GPS
+    onResumeLiveGps?.();
+    // Reset tap mode
+    onChangeTapMode('measure');
+    // Refresh OSM polygons if available
+    if (onRefreshOsmCourse) {
+      onRefreshOsmCourse();
+    }
+    // Re-fit map to hole
+    fitMapToCurrentHole();
+  }, [
+    currentOsmHole,
+    onUpdateHolePins,
+    onSetTargetPin,
+    onResumeLiveGps,
+    onChangeTapMode,
+    onRefreshOsmCourse,
+    fitMapToCurrentHole,
+  ]);
+
   // Render interactive markers (Tee, Pin, F/B, Player Ball, Target Reticle, Shots, Manual Hazards)
   useEffect(() => {
     const layer = markersLayerRef.current;
     if (!layer) return;
     layer.clearLayers();
-    const suffix = unitSuffix(unit);
+    
+    // 1. Tee Marker (Only render if ball is not at the tee to avoid overlapping black rectangle under ball)
+    const isBallAtTee =
+      Boolean(activeTeeLatLng && effectiveOrigin && computeDistanceMeters(activeTeeLatLng, effectiveOrigin) < 15);
 
-    // 1. Tee Marker
-    if (holeData.teeLatLng) {
-      const m = L.marker([holeData.teeLatLng.lat, holeData.teeLatLng.lng], {
+    if (activeTeeLatLng && !isBallAtTee) {
+      const m = L.marker([activeTeeLatLng.lat, activeTeeLatLng.lng], {
         draggable: true,
         icon: createBadgeIcon(
           `<div style="padding:2px 6px;border-radius:6px;background:rgba(15,23,42,0.94);color:#fff;border:1px solid rgba(255,255,255,0.8);font-size:10px;font-weight:700;box-shadow:0 2px 6px rgba(0,0,0,0.45);white-space:nowrap;">TEE</div>`,
@@ -928,58 +967,21 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       });
     }
 
-    // 6. Player Standing / Ball Position Marker (always draggable!)
+    // 6. Player Standing / Ball Position Marker (clean blue circle with white outline and inner dot)
     if (effectiveOrigin) {
       const m = L.marker([effectiveOrigin.lat, effectiveOrigin.lng], {
         draggable: true,
         zIndexOffset: 500,
-        icon: createBadgeIcon(
-          `<div style="width:20px;height:20px;border-radius:9999px;background:#0EA5E9;border:2.5px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;">
-            <div style="width:6px;height:6px;border-radius:9999px;background:#FFFFFF;"></div>
-          </div>`,
-          [20, 20],
-          [10, 10]
-        ),
+        icon: L.divIcon({
+          className: 'ball-position-marker',
+          html: `<div style="width:22px;height:22px;border-radius:50%;background:#0284c7;border:2.5px solid #ffffff;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.35);"><div style="width:6px;height:6px;border-radius:50%;background:#ffffff;"></div></div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
       }).addTo(layer);
-      m.bindTooltip('You / Ball (drag to move)', { direction: 'top', offset: [0, -10] });
       m.on('dragend', () => {
         const ll = m.getLatLng();
         onSetManualPlayerPos({ lat: ll.lat, lng: ll.lng });
-      });
-    }
-
-    // 7. Target Reticle
-    if (targetPin) {
-      const originPrefix = isPlayerOnCourse ? 'From You' : 'From Tee';
-      const label =
-        distToTarget !== null
-          ? `${originPrefix}: ${formatDistanceValue(distToTarget, unit)} ${suffix}${
-              distTargetToGreen !== null
-                ? ` · ${formatDistanceValue(distTargetToGreen, unit)} to Pin`
-                : ''
-            }`
-          : 'Target';
-      const m = L.marker([targetPin.lat, targetPin.lng], {
-        draggable: true,
-        zIndexOffset: 450,
-        icon: createBadgeIcon(
-          `<div style="display:flex;flex-direction:column;align-items:center;transform:translateY(-22px);">
-            <div style="margin-bottom:4px;padding:2px 7px;border-radius:6px;background:rgba(13,21,17,0.95);color:#fff;border:1px solid rgba(255,255,255,0.35);font-family:monospace;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 3px 8px rgba(0,0,0,0.5);">${label}</div>
-            <div style="width:28px;height:28px;border-radius:9999px;border:2px solid #FCD34D;background:rgba(251,191,36,0.2);display:flex;align-items:center;justify-content:center;">
-              <div style="width:7px;height:7px;border-radius:9999px;background:#FCD34D;"></div>
-            </div>
-          </div>`,
-          [140, 56],
-          [70, 42]
-        ),
-      }).addTo(layer);
-      m.on('drag', () => {
-        const ll = m.getLatLng();
-        onSetTargetPin({ lat: ll.lat, lng: ll.lng });
-      });
-      m.on('dragend', () => {
-        const ll = m.getLatLng();
-        onSetTargetPin({ lat: ll.lat, lng: ll.lng });
       });
     }
 
@@ -1017,13 +1019,117 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
     distToTarget,
     distTargetToGreen,
     shots,
+    activeTeeLatLng,
     onUpdateHolePins,
     onSetManualPlayerPos,
+  ]);
+
+  // Dedicated Target Reticle Effect: persistent marker, completely isolated from markersLayer.clearLayers()
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (!targetPin) {
+      if (targetMarkerRef.current) {
+        targetMarkerRef.current.remove();
+        targetMarkerRef.current = null;
+      }
+      return;
+    }
+
+    const originPrefix = isPlayerOnCourse ? 'From You' : 'From Tee';
+    const label =
+      distToTarget !== null
+        ? `${originPrefix}: ${formatDistanceValue(distToTarget, unit)} ${suffix}${
+            distTargetToGreen !== null
+              ? ` · ${formatDistanceValue(distTargetToGreen, unit)} to Pin`
+              : ''
+          }`
+        : 'Target';
+
+    if (!targetMarkerRef.current) {
+      const m = L.marker([targetPin.lat, targetPin.lng], {
+        draggable: true,
+        autoPan: true,
+        autoPanPadding: [30, 30],
+        zIndexOffset: 1000,
+        icon: createBadgeIcon(
+          `<div style="cursor:grab;touch-action:none;user-select:none;display:flex;flex-direction:column;align-items:center;transform:translateY(-22px);">
+            <div id="target-reticle-badge" style="margin-bottom:4px;padding:2px 7px;border-radius:6px;background:rgba(13,21,17,0.95);color:#fff;border:1px solid rgba(255,255,255,0.35);font-family:monospace;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 3px 8px rgba(0,0,0,0.5);">${label}</div>
+            <div style="width:36px;height:36px;border-radius:9999px;border:3px solid #FCD34D;background:rgba(251,191,36,0.35);display:flex;align-items:center;justify-content:center;box-shadow:0 0 10px rgba(252,211,77,0.5);">
+              <div style="width:8px;height:8px;border-radius:9999px;background:#FCD34D;"></div>
+            </div>
+          </div>`,
+          [160, 64],
+          [80, 46]
+        ),
+      }).addTo(map);
+
+      m.on('dragstart', () => {
+        isDraggingTargetRef.current = true;
+        map.dragging.disable();
+      });
+
+      m.on('drag', () => {
+        const ll = m.getLatLng();
+        if (targetLineFromOriginRef.current && measureOrigin) {
+          targetLineFromOriginRef.current.setLatLngs([
+            [measureOrigin.lat, measureOrigin.lng],
+            [ll.lat, ll.lng],
+          ]);
+        }
+        if (targetLineToGreenRef.current && activeGreenCenter) {
+          targetLineToGreenRef.current.setLatLngs([
+            [ll.lat, ll.lng],
+            [activeGreenCenter.lat, activeGreenCenter.lng],
+          ]);
+        }
+        const badgeEl = m.getElement()?.querySelector('#target-reticle-badge');
+        if (badgeEl && measureOrigin) {
+          const originMeters = computeDistanceMeters(measureOrigin, { lat: ll.lat, lng: ll.lng });
+          const originDist = Math.round(unit === 'meters' ? originMeters : originMeters * 1.0936133);
+          let text = `${originPrefix}: ${originDist} ${suffix}`;
+          if (activeGreenCenter) {
+            const greenMeters = computeDistanceMeters({ lat: ll.lat, lng: ll.lng }, activeGreenCenter);
+            const greenDist = Math.round(unit === 'meters' ? greenMeters : greenMeters * 1.0936133);
+            text += ` · ${greenDist} to Pin`;
+          }
+          badgeEl.textContent = text;
+        }
+      });
+
+      m.on('dragend', () => {
+        map.dragging.enable();
+        const ll = m.getLatLng();
+        onSetTargetPin({ lat: ll.lat, lng: ll.lng });
+        setTimeout(() => {
+          isDraggingTargetRef.current = false;
+        }, 200);
+      });
+
+      targetMarkerRef.current = m;
+    } else {
+      if (!isDraggingTargetRef.current) {
+        targetMarkerRef.current.setLatLng([targetPin.lat, targetPin.lng]);
+      }
+      const badgeEl = targetMarkerRef.current.getElement()?.querySelector('#target-reticle-badge');
+      if (badgeEl) {
+        badgeEl.textContent = label;
+      }
+    }
+  }, [
+    targetPin,
+    distToTarget,
+    distTargetToGreen,
+    isPlayerOnCourse,
+    measureOrigin,
+    activeGreenCenter,
+    unit,
+    suffix,
     onSetTargetPin,
   ]);
 
-  const suffix = unitSuffix(unit);
-  const topHazards = hazardDistances.slice(0, 5);
+    const topHazards = hazardDistances.slice(0, 5);
 
   const tapModePrompt: Record<MapTapMode, string> = {
     measure: 'Tap anywhere to drop target reticle. Tap any bunker or water polygon for Carry/Clear.',
@@ -1041,70 +1147,129 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
       {/* Top-Left Hole Switcher & Live Distance HUD */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-2 max-w-[285px] w-[calc(100%-84px)] sm:w-[285px]">
+      <div className="absolute top-3 left-3 z-[400] flex flex-col gap-2 w-auto max-w-[200px] sm:max-w-[230px]">
         {/* Quick Hole Picker Bar */}
         <div className="relative">
-          <div className="rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 p-1 shadow-xl flex items-center justify-between gap-1">
-            <button
-              type="button"
-              onClick={() => {
-                setIsHolePickerOpen(false);
-                onSelectHole(Math.max(1, holeData.holeNumber - 1));
-              }}
-              disabled={holeData.holeNumber <= 1}
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-200 hover:bg-white/10 disabled:opacity-35 transition-colors"
-              aria-label="Previous hole on map"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
+          <div className="rounded-2xl bg-[#0D1511]/94 backdrop-blur-md text-white border border-white/20 p-1.5 shadow-2xl flex items-center justify-between gap-1 min-h-[48px]">
+            {(() => {
+              const totalHolesCount = Math.max(18, Object.keys(allHoles).length);
+              return (
+                <>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setIsHolePickerOpen(false);
+                      onSelectHole(getPrevHoleNumber(holeData.holeNumber, holeMode, totalHolesCount));
+                    }}
+                    className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/15 active:scale-95 transition-all text-slate-200 hover:text-white shrink-0 touch-manipulation"
+                    aria-label="Previous Hole"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
 
-            <button
-              type="button"
-              onClick={() => setIsHolePickerOpen((prev) => !prev)}
-              className="flex-1 min-h-[36px] px-2 rounded-lg hover:bg-white/10 flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors"
-              aria-expanded={isHolePickerOpen}
-              aria-label="Choose hole number"
-            >
-              <span className="font-display font-bold text-white">Hole {holeData.holeNumber}</span>
-              <span className="text-slate-400">·</span>
-              <span className="font-mono text-emerald-300 tabular-nums">Par {holeData.par}</span>
-              <ChevronDown
-                className={`w-3.5 h-3.5 text-slate-300 transition-transform ${
-                  isHolePickerOpen ? 'rotate-180' : ''
-                }`}
-              />
-            </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsHolePickerOpen((prev) => !prev);
+                    }}
+                    className="flex-1 h-10 px-2 rounded-xl flex items-center justify-center gap-1.5 hover:bg-white/10 transition-colors min-w-0"
+                  >
+                    <div className="flex items-baseline gap-1.5 min-w-0">
+                      <span className="font-display font-black text-sm sm:text-base tracking-tight text-emerald-400 whitespace-nowrap">
+                        Hole {holeData.holeNumber}
+                      </span>
+                      <span className="text-[11px] sm:text-xs font-mono text-slate-300 whitespace-nowrap font-bold">
+                        P{holeData.par}
+                      </span>
+                    </div>
+                    <ChevronDown
+                      className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${
+                        isHolePickerOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setIsHolePickerOpen(false);
-                onSelectHole(Math.min(18, holeData.holeNumber + 1));
-              }}
-              disabled={holeData.holeNumber >= 18}
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg text-slate-200 hover:bg-white/10 disabled:opacity-35 transition-colors"
-              aria-label="Next hole on map"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setIsHolePickerOpen(false);
+                      onSelectHole(getNextHoleNumber(holeData.holeNumber, holeMode, totalHolesCount));
+                    }}
+                    className="w-10 h-10 rounded-xl flex items-center justify-center hover:bg-white/15 active:scale-95 transition-all text-slate-200 hover:text-white shrink-0 touch-manipulation"
+                    aria-label="Next Hole"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </>
+              );
+            })()}
           </div>
 
+          {/* Expanded Hole Grid Modal */}
           {isHolePickerOpen && (
-            <div className="mt-1.5 rounded-2xl bg-[#0D1511]/96 backdrop-blur-md text-white border border-white/20 p-2.5 shadow-2xl">
-              <div className="flex items-center justify-between mb-2 px-0.5">
-                <span className="text-[11px] font-semibold text-slate-300">
-                  Jump to Hole (zooms map)
-                </span>
-                <span className="text-[10px] font-mono text-emerald-300">
-                  ● OSM Mapped
-                </span>
+            <div className="absolute top-full left-0 right-0 mt-1.5 p-2 rounded-xl bg-[#0D1511]/96 backdrop-blur-md border border-white/20 shadow-2xl z-[500] animate-in fade-in zoom-in-95 duration-100 min-w-[280px]">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 px-1 flex items-center justify-between gap-1 flex-wrap">
+                <span>Select Hole</span>
+                {onToggleHoleMode && (
+                  <div className="flex items-center gap-0.5 bg-black/60 p-0.5 rounded-lg border border-white/15">
+                    <button
+                      type="button"
+                      onClick={() => onToggleHoleMode('18')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-colors ${
+                        holeMode === '18' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      18H
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onToggleHoleMode('front9')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-colors ${
+                        holeMode === 'front9' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      F9
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onToggleHoleMode('back9')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-colors ${
+                        holeMode === 'back9' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      B9
+                    </button>
+                    {Object.keys(allHoles).length > 18 && (
+                      <button
+                        type="button"
+                        onClick={() => onToggleHoleMode('all27')}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold transition-colors ${
+                          holeMode === 'all27' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        27H
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-6 gap-1.5">
-                {Array.from({ length: 18 }, (_, idx) => idx + 1).map((num) => {
+              <div className="grid grid-cols-6 gap-1">
+                {(holeMode === 'front9'
+                  ? [1, 2, 3, 4, 5, 6, 7, 8, 9]
+                  : holeMode === 'back9'
+                    ? [10, 11, 12, 13, 14, 15, 16, 17, 18]
+                    : Array.from({ length: Math.max(18, Object.keys(allHoles).length) }, (_, i) => i + 1)
+                ).map((num) => {
                   const h = allHoles[num];
-                  const strokes = allScores[num] ? getHoleStrokes(allScores[num]) : 0;
-                  const active = num === holeData.holeNumber;
-                  const isMapped = Boolean(h?.teeLatLng || h?.greenCenterLatLng);
+                  const s = allScores[num];
+                  const hasScore = s && (s.shots.length > 0 || (s.manualPutts || 0) > 0);
+                  const isCurrent = num === holeData.holeNumber;
+
                   return (
                     <button
                       key={num}
@@ -1113,22 +1278,18 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
                         onSelectHole(num);
                         setIsHolePickerOpen(false);
                       }}
-                      className={`min-h-[42px] rounded-lg border text-center flex flex-col items-center justify-center transition-colors relative ${
-                        active
-                          ? 'bg-emerald-600 border-emerald-400 text-white font-bold'
-                          : 'bg-white/5 border-white/10 text-slate-200 hover:bg-white/15'
+                      className={`h-9 rounded-lg flex flex-col items-center justify-center text-xs font-bold transition-all relative ${
+                        isCurrent
+                          ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-300'
+                          : hasScore
+                            ? 'bg-emerald-950/80 text-emerald-200 border border-emerald-600/40 hover:bg-emerald-900'
+                            : 'bg-white/5 text-slate-300 hover:bg-white/15'
                       }`}
                     >
-                      <span className="text-xs font-mono leading-none">{num}</span>
-                      <span className="text-[9px] text-slate-300 font-mono leading-none mt-1">
-                        {strokes > 0 ? strokes : `P${h?.par ?? 4}`}
+                      <span>{num}</span>
+                      <span className="text-[9px] font-mono opacity-70 leading-none">
+                        p{h?.par ?? 4}
                       </span>
-                      {isMapped && (
-                        <span
-                          className="w-1.5 h-1.5 rounded-full bg-emerald-400 absolute top-1 right-1"
-                          aria-hidden="true"
-                        />
-                      )}
                     </button>
                   );
                 })}
@@ -1137,8 +1298,9 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
           )}
         </div>
 
-        <div className="rounded-2xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 px-3.5 py-2.5 shadow-xl">
-          <div className="flex items-center justify-between gap-2">
+        {/* Live Distance HUD Badge */}
+        <div className="rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 p-2.5 shadow-xl">
+          <div className="flex items-center justify-between gap-1">
             <span className="text-[11px] font-medium text-emerald-300 truncate">
               {isNearestFallbackGreen
                 ? 'Nearest Green'
@@ -1149,7 +1311,7 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
             <span className="text-[11px] font-mono text-slate-300 tabular-nums shrink-0">
               {isManualPosition
                 ? 'Pinned Ball'
-                : isGpsOffCourse
+                : !isPlayerOnCourse || isGpsOffCourse
                   ? 'From Tee'
                   : gpsStatus === 'watching' && gpsAccuracyMeters !== null
                     ? `GPS ±${gpsAccuracyMeters}m`
@@ -1171,305 +1333,315 @@ export const OpenGolfHoleMap: React.FC<OpenGolfHoleMapProps> = ({
             )}
           </div>
 
+          {/* Front / Back Green Yardages */}
           {(greenMetrics.frontYards !== null || greenMetrics.backYards !== null) && (
-            <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-white/10 text-[11px] font-mono text-slate-300 tabular-nums">
-              <span>
-                Front:{' '}
-                <strong className="text-white">
-                  {formatDistanceValue(greenMetrics.frontYards, unit)}
-                </strong>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span>
-                Back:{' '}
-                <strong className="text-white">
-                  {formatDistanceValue(greenMetrics.backYards, unit)}
-                </strong>
-              </span>
-              {activeGreenPolygon && (
-                <span className="ml-auto text-[10px] text-emerald-300/90">OSM Green</span>
+            <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-white/10 text-[11px] font-mono text-slate-300">
+              {greenMetrics.frontYards !== null && (
+                <div>
+                  <span className="text-slate-400 mr-1">F:</span>
+                  <span className="font-bold text-white">
+                    {formatDistanceValue(greenMetrics.frontYards, unit)}
+                  </span>
+                  <span className="text-[9px] ml-0.5">{suffix}</span>
+                </div>
               )}
-            </div>
-          )}
-
-          {/* Target Reticle Readout */}
-          {targetPin && distToTarget !== null && (
-            <div className="mt-1.5 pt-1.5 border-t border-white/10 flex items-center justify-between gap-2 text-[11px]">
-              <div className="font-mono tabular-nums text-amber-300">
-                Target {formatDistanceValue(distToTarget, unit)}
-                {suffix}
-                {distTargetToGreen !== null
-                  ? ` · Left ${formatDistanceValue(distTargetToGreen, unit)}${suffix}`
-                  : ''}
-              </div>
-              <button
-                type="button"
-                onClick={() => onSetTargetPin(null)}
-                className="text-slate-300 hover:text-white p-1"
-                aria-label="Clear target reticle"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* In-Play Bunkers & Water Hazards from standing position */}
-          {topHazards.length > 0 && (
-            <div className="mt-2 pt-1.5 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => setHazardsExpanded((prev) => !prev)}
-                className="w-full flex items-center justify-between text-[11px] font-semibold text-slate-300 hover:text-white py-0.5"
-              >
-                <span>Bunkers & Hazards ({hazardDistances.length})</span>
-                {hazardsExpanded ? (
-                  <ChevronUp className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                )}
-              </button>
-
-              {hazardsExpanded && (
-                <div className="mt-1 space-y-1 max-h-[124px] overflow-y-auto no-scrollbar">
-                  {topHazards.map((haz) => {
-                    const isSelected = haz.id === selectedHazardId;
-                    const dotColor =
-                      haz.kind === 'water'
-                        ? '#38BDF8'
-                        : haz.kind === 'bunker'
-                          ? '#FBBF24'
-                          : '#FB923C';
-                    return (
-                      <button
-                        key={haz.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedHazardId((prev) => (prev === haz.id ? null : haz.id));
-                          mapRef.current?.panTo([haz.center.lat, haz.center.lng]);
-                        }}
-                        className={`w-full flex items-center justify-between gap-2 px-2 py-1 rounded-lg text-[11px] transition-colors text-left ${
-                          isSelected
-                            ? 'bg-white/15 text-white'
-                            : 'hover:bg-white/10 text-slate-200'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: dotColor }}
-                          />
-                          <span className="truncate">{haz.label}</span>
-                        </span>
-                        <span className="font-mono font-semibold tabular-nums shrink-0 text-white">
-                          {haz.clearYards !== null && haz.clearYards !== haz.carryYards
-                            ? `${formatDistanceValue(haz.carryYards, unit)}–${formatDistanceValue(haz.clearYards, unit)}${suffix}`
-                            : `${formatDistanceValue(haz.carryYards, unit)}${suffix}`}
-                        </span>
-                      </button>
-                    );
-                  })}
+              {greenMetrics.backYards !== null && (
+                <div>
+                  <span className="text-slate-400 mr-1">B:</span>
+                  <span className="font-bold text-white">
+                    {formatDistanceValue(greenMetrics.backYards, unit)}
+                  </span>
+                  <span className="text-[9px] ml-0.5">{suffix}</span>
                 </div>
               )}
             </div>
           )}
         </div>
+      </div>
 
-        {/* Course Prompt or Loading Banner */}
-        {!course && onOpenCourseSearch && (
+      {/* Top-Right Floating Controls (Layer toggle, Recenter hole, Course name, OSM Sync) */}
+      <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-2">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#0D1511]/92 backdrop-blur-md border border-white/15 shadow-xl text-white">
           <button
             type="button"
-            onClick={onOpenCourseSearch}
-            className="flex items-center gap-2 rounded-xl bg-white/95 text-[#0F1A14] px-3 py-2 text-xs font-semibold shadow-lg border border-slate-200 hover:bg-emerald-50 transition-colors"
+            onClick={() => setBaseLayer((prev) => (prev === 'satellite' ? 'osm' : 'satellite'))}
+            className="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-semibold hover:bg-white/10 active:scale-95 transition-all"
+            title="Toggle between Satellite Imagery and OpenStreetMap"
           >
-            <Search className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-            <span className="truncate">Find Course (Free OSM Maps)</span>
+            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline capitalize">{baseLayer}</span>
           </button>
-        )}
 
-        {isLoadingGeometry && (
-          <div className="rounded-xl bg-[#0D1511]/90 text-emerald-200 px-3 py-2 text-[11px] border border-emerald-400/30 shadow-lg">
-            Loading OpenStreetMap greens & bunkers...
-          </div>
-        )}
+          <button
+            type="button"
+            onClick={() => fitMapToCurrentHole()}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 active:scale-95 text-slate-200 transition-all"
+            title="Center map on current hole"
+            aria-label="Fit hole"
+          >
+            <Crosshair className="w-4 h-4 text-emerald-400" />
+          </button>
 
-        {geometryError && !isLoadingGeometry && (
-          <div className="rounded-xl bg-amber-950/95 text-amber-100 px-3 py-2 text-[11px] border border-amber-400/30 shadow-lg flex items-center justify-between gap-2">
-            <span className="truncate">{geometryError}</span>
+          <button
+            type="button"
+            onClick={handleResetToDefaults}
+            disabled={isLoadingGeometry}
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 active:scale-95 text-slate-200 disabled:opacity-40 transition-all"
+            title="Reset tee, pin, and ball positions to course defaults"
+            aria-label="Reset tee and pin to defaults"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-emerald-400 ${
+                isLoadingGeometry ? 'animate-spin' : ''
+              }`}
+            />
+          </button>
+
+          {onOpenCourseSearch && (
             <button
               type="button"
-              onClick={onRefreshOsmCourse}
-              className="text-amber-300 hover:text-white font-semibold shrink-0"
+              onClick={onOpenCourseSearch}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 active:scale-95 text-slate-200 transition-all"
+              title="Search different course"
+              aria-label="Search course"
             >
-              Retry
+              <Search className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+        </div>
+
+        {/* Dedicated Hazards Bar beneath Satellite / Reset / Center controls */}
+        {topHazards.length > 0 && (
+          <div className="flex items-center p-1 rounded-xl bg-[#0D1511]/92 backdrop-blur-md border border-white/15 shadow-xl text-white">
+            <button
+              type="button"
+              onClick={() => setIsHazardsMenuOpen((prev) => !prev)}
+              className={`h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all ${
+                isHazardsMenuOpen
+                  ? 'bg-amber-400 text-slate-950 shadow-md ring-2 ring-amber-300'
+                  : 'text-amber-400 hover:bg-white/10 active:scale-95'
+              }`}
+              title="Hole Hazards"
+              aria-label="Toggle hazards menu"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Hazards ({topHazards.length})</span>
             </button>
           </div>
         )}
-      </div>
 
-      {/* Top-Right Quick Map Controls */}
-      <div className="absolute top-3 right-3 z-[400] flex flex-col gap-2">
-        {onFlipToStats && (
-          <button
-            type="button"
-            onClick={onFlipToStats}
-            className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-400/40 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors whitespace-nowrap"
-            title="Flip to Stats & Shot Entry"
-          >
-            <BarChart3 className="w-4 h-4 shrink-0" />
-            <span>Stats</span>
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setBaseLayer((prev) => (prev === 'satellite' ? 'osm' : 'satellite'))}
-          className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold hover:bg-[#17261E] transition-colors"
-          title="Switch Satellite / OpenStreetMap Course Layer"
-        >
-          <Layers className="w-4 h-4 text-emerald-400" />
-          <span className="hidden sm:inline">{baseLayer === 'satellite' ? 'Satellite' : 'OSM Map'}</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={fitMapToCurrentHole}
-          className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold hover:bg-[#17261E] transition-colors"
-          title="Center on Current Hole"
-        >
-          <LocateFixed className="w-4 h-4 text-sky-400" />
-          <span className="hidden sm:inline">Center</span>
-        </button>
-
-        {course && (
-          <button
-            type="button"
-            onClick={onRefreshOsmCourse}
-            disabled={isLoadingGeometry}
-            className="min-h-[44px] min-w-[44px] px-3 rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold hover:bg-[#17261E] disabled:opacity-50 transition-colors"
-            title="Refresh OpenStreetMap greens & bunkers"
-          >
-            <RefreshCw className={`w-4 h-4 text-emerald-300 ${isLoadingGeometry ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Sync OSM</span>
-          </button>
-        )}
-
-        {isManualPosition && (
-          <button
-            type="button"
-            onClick={onResumeLiveGps}
-            className="min-h-[44px] px-3 rounded-xl bg-sky-600/95 text-white border border-sky-300/40 shadow-lg flex items-center justify-center gap-1.5 text-xs font-semibold hover:bg-sky-700 transition-colors whitespace-nowrap"
-            title="Resume live phone GPS tracking"
-          >
-            <Navigation className="w-3.5 h-3.5" />
-            <span>Live GPS</span>
-          </button>
-        )}
-      </div>
-
-      {/* Bottom Map Calibration & Measure Toolbar */}
-      <div className="absolute bottom-3 left-3 right-3 z-[400] flex flex-col gap-1.5 pointer-events-none">
-        <div className="self-start max-w-full rounded-xl bg-[#0D1511]/92 backdrop-blur-md text-white border border-white/15 p-1.5 shadow-xl pointer-events-auto flex items-center gap-1 overflow-x-auto no-scrollbar">
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('measure')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'measure' ? 'bg-emerald-600 text-white' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            <Crosshair className="w-3.5 h-3.5" />
-            <span>Measure</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('drop_ball')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'drop_ball' ? 'bg-sky-600 text-white' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            <UserCheck className="w-3.5 h-3.5" />
-            <span>Drop Ball</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('log_shot')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'log_shot' ? 'bg-emerald-600 text-white' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5" />
-            <span>Tap Shot End</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('set_tee')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'set_tee' ? 'bg-amber-500 text-slate-950' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            Set Tee
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('set_green')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'set_green' ? 'bg-rose-500 text-white' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            <Flag className="w-3.5 h-3.5" />
-            <span>Set Pin</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('set_green_front')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'set_green_front' ? 'bg-teal-500 text-slate-950' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            Front
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('set_green_back')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'set_green_back' ? 'bg-teal-500 text-slate-950' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            Back
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTapMode('add_hazard')}
-            className={`min-h-[38px] px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-              tapMode === 'add_hazard' ? 'bg-amber-500 text-slate-950' : 'text-slate-200 hover:bg-white/10'
-            }`}
-          >
-            + Hazard
-          </button>
-        </div>
-
-        <div className="self-start flex items-center gap-2 rounded-lg bg-[#0D1511]/88 backdrop-blur-sm text-slate-200 px-2.5 py-1 text-[11px] border border-white/10 pointer-events-auto">
-          <span>{tapModePrompt[tapMode]}</span>
-          {tapMode === 'add_hazard' && (
-            <div className="flex items-center gap-1.5">
-              <select
-                value={hazardType}
-                onChange={(e) => setHazardType(e.target.value as HazardPinType)}
-                className="bg-slate-800 text-white rounded px-2 py-0.5 text-[11px] border border-amber-400 font-bold"
-              >
-                <option value="bunker">Bunker</option>
-                <option value="water">Water</option>
-                <option value="dogleg">Dogleg</option>
-                <option value="layup">Layup</option>
-              </select>
+        {/* Collapsible Hazards Dropdown in Top Right */}
+        {isHazardsMenuOpen && topHazards.length > 0 && (
+          <div className="p-2 rounded-2xl bg-[#0D1511]/96 backdrop-blur-md border border-white/20 shadow-2xl flex flex-col gap-1.5 w-64 max-w-[85vw] animate-in fade-in zoom-in-95 duration-100 text-white z-[500]">
+            <div className="flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 pb-1">
+              <span>Hole {holeData.holeNumber} Hazards</span>
               <button
                 type="button"
-                onClick={() => onChangeTapMode('measure')}
-                className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition-colors shadow-xs"
+                onClick={() => setIsHazardsMenuOpen(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold px-1"
               >
-                Done
+                ✕
               </button>
             </div>
-          )}
+            <div className="flex flex-col gap-1 max-h-52 overflow-y-auto no-scrollbar">
+              {topHazards.map((h) => {
+                const isSel = selectedHazardId === h.id;
+                return (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => setSelectedHazardId((prev) => (prev === h.id ? null : h.id))}
+                    className={`p-2 rounded-xl text-xs font-mono flex items-center justify-between gap-2 text-left transition-all ${
+                      isSel
+                        ? 'bg-amber-400 text-slate-950 font-bold ring-1 ring-amber-300 shadow-sm'
+                        : h.kind === 'water'
+                          ? 'bg-sky-950/70 text-sky-200 border border-sky-600/40 hover:bg-sky-900/80'
+                          : 'bg-amber-950/70 text-amber-200 border border-amber-600/40 hover:bg-amber-900/80'
+                    }`}
+                  >
+                    <span className="font-sans font-bold text-xs truncate">{h.label}</span>
+                    <span className="font-bold shrink-0">
+                      {formatDistanceValue(h.carryYards, unit)}
+                      {h.clearYards !== null && `–${formatDistanceValue(h.clearYards, unit)}`}
+                      <span className="text-[10px] opacity-75 ml-0.5">{suffix}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+
+
+        {geometryError && (
+          <div className="px-2.5 py-1 rounded-lg bg-rose-950/80 border border-rose-500/40 text-[10px] font-medium text-rose-300 flex items-center gap-1 shadow-md max-w-[200px]">
+            <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+            <span className="truncate">{geometryError}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Floating Mode Prompt Banner */}
+      {tapMode !== 'measure' && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[400] max-w-[90%] px-3 py-1.5 rounded-xl bg-amber-400 text-slate-950 shadow-2xl font-semibold text-xs text-center border border-amber-300 animate-in fade-in slide-in-from-top-2">
+          {tapModePrompt[tapMode]}
+        </div>
+      )}
+
+      {/* Bottom Map Controls Bar & Overlays */}
+      <div className="absolute bottom-2 md:bottom-3 left-3 right-3 z-[400] flex flex-col gap-1.5 max-w-xl mx-auto pointer-events-none">
+        {/* Target Reticle Float (Cleanly above hazards and action toolbar) */}
+        {targetPin && (
+          <div className="pointer-events-auto w-full">
+            <div className="p-2.5 rounded-2xl bg-[#0D1511]/95 backdrop-blur-md text-white border border-amber-400/50 shadow-2xl flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-amber-400/20 border border-amber-400/60 flex items-center justify-center shrink-0">
+                  <Crosshair className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                    Target Reticle
+                  </div>
+                  <div className="text-xs font-mono font-bold truncate">
+                    {distToTarget !== null ? `${formatDistanceValue(distToTarget, unit)} ${suffix}` : '--'}
+                    {distTargetToGreen !== null && (
+                      <span className="text-slate-400 ml-1.5 font-normal">
+                        · {formatDistanceValue(distTargetToGreen, unit)} {suffix} to Pin
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onQuickLogFromMap(targetPin, effectiveOrigin, distToTarget);
+                  }}
+                  className="h-8 px-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center gap-1 shadow-sm transition-colors active:scale-95"
+                >
+                  <span>Log Shot Here</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSetTargetPin(null)}
+                  className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 text-xs font-bold transition-colors"
+                  aria-label="Clear Target"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+
+        {/* Action Toolbar - Centered with snug fit (no right blank space) */}
+        <div className="pointer-events-auto w-fit mx-auto self-center p-1 rounded-2xl bg-[#0D1511]/94 backdrop-blur-md text-white border border-white/15 shadow-2xl flex items-center justify-center max-w-[calc(100vw-1.5rem)] overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-1 py-0.5 shrink-0">
+            {/* Ball Position */}
+            <button
+              type="button"
+              onClick={() => onChangeTapMode(tapMode === 'drop_ball' ? 'measure' : 'drop_ball')}
+              className={`h-9 px-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 ${
+                tapMode === 'drop_ball'
+                  ? 'bg-sky-400 text-slate-950 shadow-md ring-2 ring-sky-300'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-200'
+              }`}
+              title="Set or move ball position"
+            >
+              <MapPin className="w-3.5 h-3.5 text-sky-400" />
+              <span>Ball</span>
+            </button>
+
+            {/* Pin Position */}
+            <button
+              type="button"
+              onClick={() => onChangeTapMode(tapMode === 'set_green' ? 'measure' : 'set_green')}
+              className={`h-9 px-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 ${
+                tapMode === 'set_green'
+                  ? 'bg-rose-500 text-white shadow-md ring-2 ring-rose-300'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-200'
+              }`}
+              title="Set flag / pin position"
+            >
+              <Flag className="w-3.5 h-3.5 text-rose-400" />
+              <span>Pin</span>
+            </button>
+
+            {/* Front */}
+            <button
+              type="button"
+              onClick={() => onChangeTapMode(tapMode === 'set_green_front' ? 'measure' : 'set_green_front')}
+              className={`h-9 px-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 transition-all whitespace-nowrap shrink-0 ${
+                tapMode === 'set_green_front'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-300'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-200'
+              }`}
+              title="Set green front edge"
+            >
+              <span>Front</span>
+            </button>
+
+            {/* Back */}
+            <button
+              type="button"
+              onClick={() => onChangeTapMode(tapMode === 'set_green_back' ? 'measure' : 'set_green_back')}
+              className={`h-9 px-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1 transition-all whitespace-nowrap shrink-0 ${
+                tapMode === 'set_green_back'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-300'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-200'
+              }`}
+              title="Set green back edge"
+            >
+              <span>Back</span>
+            </button>
+
+            {/* + Hazard */}
+            <button
+              type="button"
+              onClick={() => onChangeTapMode(tapMode === 'add_hazard' ? 'measure' : 'add_hazard')}
+              className={`h-9 px-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 ${
+                tapMode === 'add_hazard'
+                  ? 'bg-amber-400 text-slate-950 shadow-md ring-2 ring-amber-300'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-200'
+              }`}
+              title="Add hazard pin"
+            >
+              <span>+ Hazard</span>
+            </button>
+
+            {/* If add_hazard is active, show hazard type picker */}
+            {tapMode === 'add_hazard' && (
+              <div className="flex items-center gap-0.5 bg-black/60 p-0.5 rounded-xl border border-amber-400/50 shrink-0">
+                {((['bunker', 'water', 'dogleg', 'layup'] as HazardPinType[])).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setHazardType(t)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold capitalize transition-all ${
+                      hazardType === t ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => onChangeTapMode('measure')}
+                  className="px-2 py-1 rounded-lg bg-white/20 text-white text-[10px] font-bold ml-0.5 hover:bg-white/30"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+
+
         </div>
       </div>
     </div>

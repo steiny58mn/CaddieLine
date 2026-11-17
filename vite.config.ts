@@ -35,8 +35,8 @@ export default defineConfig(({ mode }) => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'CaddieLine — Golf Shot Tracker & GPS',
-          short_name: 'CaddieLine',
+          name: 'PocketCaddie — Golf Shot Tracker & GPS',
+          short_name: 'PocketCaddie',
           description: 'Real-time golf shot tracker, satellite course yardage map, automatic scorecard, and Web NFC GolfPad sensor integration.',
           theme_color: '#0F764A',
           background_color: '#F5F7F5',

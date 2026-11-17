@@ -10,7 +10,12 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'd
   const { isInstallable, isInstalled, isIOS, isInIframe, install } = usePWAInstall();
   const [showGuide, setShowGuide] = useState(false);
 
-  if (isInstalled) {
+  const isNativeCapacitor =
+    typeof window !== 'undefined' &&
+    (Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()) ||
+      window.location.protocol === 'capacitor:');
+
+  if (isInstalled || isNativeCapacitor) {
     return null;
   }
 

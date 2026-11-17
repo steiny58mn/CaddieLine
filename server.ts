@@ -800,28 +800,41 @@ out geom;
       }
     }
 
-    const baseName = name
+    const rawClean = name
       .split('—')[0]
       .replace(/\b(golf\s*(course|club|links)|country\s*club|resort)\b/gi, '')
       .trim();
-    const queryTerm = baseName.length >= 3 ? baseName : name.split('—')[0].trim();
+    const strippedClean = rawClean.replace(/^(the|a|an)\s+/i, '').trim();
+    const queryTerms = Array.from(
+      new Set([rawClean, strippedClean, name.split('—')[0].trim()])
+    ).filter((t) => t.length >= 3);
 
-    if (queryTerm) {
+    const hasCoords = !Number.isNaN(lat) && !Number.isNaN(lng);
+    const MAX_MATCH_DIST_METERS = 25000;
+
+    for (const queryTerm of queryTerms) {
       const targetNorm = normalizeCourseName(name.split('—')[0]);
 
       // 1. Search OpenGolfAPI (keyless, 32k+ courses)
       const ogaHits = await searchOpenGolfApi(queryTerm);
-      const ogaRelevant = ogaHits.filter((c) => {
-        if (matchedList.some((m) => m.id === c.id)) return false;
-        if (c.location && !Number.isNaN(lat) && !Number.isNaN(lng)) {
-          const dist = haversineMeters(lat, lng, c.location.lat, c.location.lng);
-          if (dist <= 15000) return true;
-        }
-        const clubNorm = normalizeCourseName(c.clubName);
-        return Boolean(
-          targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
-        );
-      });
+      let ogaRelevant = ogaHits.filter((c) => !matchedList.some((m) => m.id === c.id));
+      if (hasCoords) {
+        ogaRelevant = ogaRelevant
+          .map((c) => ({
+            course: c,
+            dist: c.location ? haversineMeters(lat, lng, c.location.lat, c.location.lng) : Infinity,
+          }))
+          .filter((item) => item.dist <= MAX_MATCH_DIST_METERS)
+          .sort((a, b) => a.dist - b.dist)
+          .map((item) => item.course);
+      } else {
+        ogaRelevant = ogaRelevant.filter((c) => {
+          const clubNorm = normalizeCourseName(c.clubName);
+          return Boolean(
+            targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
+          );
+        });
+      }
 
       const ogaHydrated = await Promise.all(
         ogaRelevant.slice(0, 4).map(async (c) => {
@@ -829,22 +842,33 @@ out geom;
           return (await fetchOpenGolfDetail(c.id)) ?? c;
         })
       );
-      matchedList.push(...ogaHydrated);
+      for (const h of ogaHydrated) {
+        if (!matchedList.some((m) => m.id === h.id)) {
+          matchedList.push(h);
+        }
+      }
 
       // 2. If GolfCourseAPI key is also configured, check it
       if (getGolfCourseApiKey()) {
         const searchHits = await searchGolfCourseApi(queryTerm);
-        const relevant = searchHits.filter((c) => {
-          if (matchedList.some((m) => m.id === c.id)) return false;
-          if (c.location && !Number.isNaN(lat) && !Number.isNaN(lng)) {
-            const dist = haversineMeters(lat, lng, c.location.lat, c.location.lng);
-            if (dist <= 8000) return true;
-          }
-          const clubNorm = normalizeCourseName(c.clubName);
-          return Boolean(
-            targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
-          );
-        });
+        let relevant = searchHits.filter((c) => !matchedList.some((m) => m.id === c.id));
+        if (hasCoords) {
+          relevant = relevant
+            .map((c) => ({
+              course: c,
+              dist: c.location ? haversineMeters(lat, lng, c.location.lat, c.location.lng) : Infinity,
+            }))
+            .filter((item) => item.dist <= MAX_MATCH_DIST_METERS)
+            .sort((a, b) => a.dist - b.dist)
+            .map((item) => item.course);
+        } else {
+          relevant = relevant.filter((c) => {
+            const clubNorm = normalizeCourseName(c.clubName);
+            return Boolean(
+              targetNorm && clubNorm && (clubNorm.includes(targetNorm) || targetNorm.includes(clubNorm))
+            );
+          });
+        }
 
         const hydrated = await Promise.all(
           relevant.slice(0, 4).map(async (c) => {
@@ -852,7 +876,11 @@ out geom;
             return (await fetchGolfCourseApiDetail(c.id)) ?? c;
           })
         );
-        matchedList.push(...hydrated);
+        for (const h of hydrated) {
+          if (!matchedList.some((m) => m.id === h.id)) {
+            matchedList.push(h);
+          }
+        }
       }
     }
 
@@ -883,8 +911,17 @@ out geom;
     return name
       .toLowerCase()
       .replace(/^the\s+/, '')
-      .replace(/\b(golf|course|club|links|country|resort)\b/g, '')
+      .replace(/\b(golf|course|club|links|country|resort|gc|cc)\b/g, '')
       .replace(/[^a-z0-9]/g, '');
+  }
+
+  function rateCandidateQuality(name: string, formattedAddress?: string, score?: number): number {
+    let pts = score ?? 50;
+    const addr = formattedAddress || '';
+    if (/\d/.test(addr)) pts += 40;
+    if (/\b(township of|town of|township)\b/i.test(addr)) pts -= 35;
+    if (/\b(golf|course|club)\b/i.test(name)) pts += 10;
+    return pts;
   }
 
   function deduplicateCourses(items: UnifiedCourseCandidate[]): UnifiedCourseCandidate[] {
@@ -894,17 +931,32 @@ out geom;
       const existingIdx = out.findIndex((prev) => {
         const dist = haversineMeters(prev.lat, prev.lng, item.lat, item.lng);
         const prevNorm = normalizeCourseName(prev.name);
-        if (dist < 2500 && norm && prevNorm && norm === prevNorm) return true;
-        if (dist < 150) return true;
+
+        // 1. Close physical proximity: same parcel / clubhouse
+        if (dist < 500) return true;
+
+        // 2. Exact normalized name match within regional distance (up to 35km)
+        if (norm && prevNorm && norm === prevNorm) {
+          const maxDist = norm.length >= 5 ? 35000 : 15000;
+          if (dist < maxDist) return true;
+        }
+
+        // 3. One name contains the other within 20km (e.g. 'The Summit' vs 'Summit Golf Club')
+        if (norm && prevNorm && (norm.includes(prevNorm) || prevNorm.includes(norm))) {
+          const minLen = Math.min(norm.length, prevNorm.length);
+          if (minLen >= 5 && dist < 20000) return true;
+        }
+
         return false;
       });
+
       if (existingIdx === -1) {
         out.push(item);
       } else {
         const prev = out[existingIdx];
-        const prevHasStreet = Boolean(prev.formattedAddress && /\d/.test(prev.formattedAddress));
-        const itemHasStreet = Boolean(item.formattedAddress && /\d/.test(item.formattedAddress));
-        if ((!prevHasStreet && itemHasStreet) || (prevHasStreet === itemHasStreet && item.score > prev.score)) {
+        const prevScore = rateCandidateQuality(prev.name, prev.formattedAddress, prev.score);
+        const itemScore = rateCandidateQuality(item.name, item.formattedAddress, item.score);
+        if (itemScore > prevScore) {
           out[existingIdx] = item;
         }
       }

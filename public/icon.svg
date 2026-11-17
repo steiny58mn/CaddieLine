@@ -1,14 +1,94 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="112" fill="#0F764A"/>
-  <rect x="24" y="24" width="464" height="464" rx="92" fill="none" stroke="#34D399" stroke-opacity="0.28" stroke-width="6"/>
-  <!-- Golf Green & Cup -->
-  <ellipse cx="236" cy="378" rx="124" ry="34" fill="#0A4F31"/>
-  <ellipse cx="236" cy="376" rx="22" ry="8" fill="#062E1C"/>
-  <!-- Flagstick -->
-  <line x1="236" y1="376" x2="236" y2="118" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round"/>
-  <!-- Flag Pennant -->
-  <path d="M244 126 L388 176 L244 228 Z" fill="#FBBF24"/>
-  <!-- NFC Signal Arcs -->
-  <path d="M164 214 A68 68 0 0 0 164 310" fill="none" stroke="#A7F3D0" stroke-width="16" stroke-linecap="round"/>
-  <path d="M126 184 A110 110 0 0 0 126 340" fill="none" stroke="#6EE7B7" stroke-width="16" stroke-linecap="round"/>
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E623E"/>
+      <stop offset="50%" stop-color="#094A2D"/>
+      <stop offset="100%" stop-color="#052E1B"/>
+    </linearGradient>
+
+    <!-- Putting Green Turf Gradient -->
+    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#148052"/>
+      <stop offset="100%" stop-color="#0B5233"/>
+    </linearGradient>
+
+    <!-- Flag Pennant Gradient -->
+    <linearGradient id="flagGrad" x1="0%" y1="0%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#FBBF24"/>
+      <stop offset="60%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </linearGradient>
+
+    <!-- Golf Ball Gradient -->
+    <radialGradient id="ballGrad" cx="38%" cy="32%" r="65%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="65%" stop-color="#E2E8F0"/>
+      <stop offset="100%" stop-color="#94A3B8"/>
+    </radialGradient>
+
+    <!-- Flagpole Metallic Gradient -->
+    <linearGradient id="poleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F1F5F9"/>
+      <stop offset="50%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CBD5E1"/>
+    </linearGradient>
+
+    <!-- Drop Shadow for Flag -->
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="2" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <filter id="ballShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#031A10" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <!-- App Rounded Squircle Base -->
+  <rect width="512" height="512" rx="116" fill="url(#bgGrad)"/>
+  <rect x="16" y="16" width="480" height="480" rx="100" fill="none" stroke="#34D399" stroke-opacity="0.22" stroke-width="4"/>
+
+  <!-- Precision GPS Distance Radar Rings (Caddie tech hint) -->
+  <circle cx="270" cy="380" r="160" fill="none" stroke="#34D399" stroke-opacity="0.12" stroke-width="3" stroke-dasharray="8 8"/>
+  <circle cx="270" cy="380" r="110" fill="none" stroke="#34D399" stroke-opacity="0.18" stroke-width="3"/>
+
+  <!-- Sculpted Green Mounding / Turf -->
+  <ellipse cx="270" cy="380" rx="160" ry="46" fill="url(#greenGrad)"/>
+  <ellipse cx="270" cy="380" rx="150" ry="40" fill="#0C5838" fill-opacity="0.5"/>
+
+  <!-- The Cup / Golf Hole -->
+  <ellipse cx="270" cy="385" rx="36" ry="14" fill="#03150C"/>
+  <ellipse cx="270" cy="384" rx="32" ry="11" fill="#020B06"/>
+  <!-- Inner cup liner ring -->
+  <ellipse cx="270" cy="383" rx="30" ry="9" fill="none" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="2"/>
+
+  <!-- Stainless Steel Flagpole -->
+  <line x1="270" y1="384" x2="270" y2="82" stroke="url(#poleGrad)" stroke-width="14" stroke-linecap="round"/>
+  <!-- Gold Ball Finial on top of Flagpole -->
+  <circle cx="270" cy="80" r="10" fill="#FBBF24"/>
+
+  <!-- Dynamic Flying Golf Flag Pennant -->
+  <path d="M277 88 C325 76, 375 110, 420 96 C426 94, 430 98, 428 104 C405 150, 360 148, 277 176 Z" 
+        fill="url(#flagGrad)" 
+        filter="url(#shadow)"/>
+
+  <!-- Flag Fabric Crease Highlight -->
+  <path d="M277 92 C325 80, 375 114, 415 100" fill="none" stroke="#FEF3C7" stroke-width="3" stroke-opacity="0.6"/>
+
+  <!-- Golf Ball resting strategically on green (foreground right) -->
+  <g filter="url(#ballShadow)">
+    <circle cx="178" cy="376" r="34" fill="url(#ballGrad)"/>
+    <!-- Subtle Golf Ball Dimple Texture Accents -->
+    <circle cx="166" cy="364" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="178" cy="360" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="190" cy="364" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="160" cy="374" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="172" cy="372" r="3.4" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="184" cy="372" r="3.4" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="196" cy="376" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="166" cy="386" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="178" cy="386" r="3.4" fill="#94A3B8" fill-opacity="0.45"/>
+    <circle cx="190" cy="386" r="3.2" fill="#94A3B8" fill-opacity="0.45"/>
+    <!-- Specular Highlight on Ball -->
+    <ellipse cx="170" cy="358" rx="8" ry="4" fill="#FFFFFF" fill-opacity="0.8" transform="rotate(-30 170 358)"/>
+  </g>
 </svg>
