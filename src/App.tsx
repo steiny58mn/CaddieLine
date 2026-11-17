@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ClipboardList, Map as MapIcon, Moon, Nfc, Ruler, Shield, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
+import { BarChart3, ClipboardList, Map as MapIcon, Moon, Nfc, Ruler, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -51,8 +51,6 @@ import { CourseLandingView } from './components/CourseLandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { GpsTapeMeasureModal } from './components/GpsTapeMeasureModal';
 import { useWakeLock } from './hooks/useWakeLock';
-import { usePocketMode } from './hooks/usePocketMode';
-import { PocketShield } from './components/PocketShield';
 
 const STORAGE_KEYS = {
   ROUND: 'caddieline_active_round_v1',
@@ -101,14 +99,7 @@ export default function App() {
 
   // Screen Wake Lock & GPS Tape Measure Modal State
   const wakeLock = useWakeLock();
-  const pocketMode = usePocketMode();
 
-  // Auto-acquire wake lock when Pocket Shield is active so Web NFC scanning continues uninterrupted
-  useEffect(() => {
-    if (pocketMode.isPocketShieldActive && wakeLock.isSupported && !wakeLock.isWakeLockActive) {
-      void wakeLock.requestWakeLock();
-    }
-  }, [pocketMode.isPocketShieldActive, wakeLock]);
   const [isTapeMeasureOpen, setIsTapeMeasureOpen] = useState(false);
 
   const [round, setRound] = useState<RoundState>(() =>
@@ -506,7 +497,7 @@ export default function App() {
     const lastShot = currentHoleScore.shots[currentHoleScore.shots.length - 1];
 
     // If an NFC-started shot is currently open, finish & record its outcome instead of duplicating
-    if (lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng) {
+    if (lastShot && !lastShot.endLatLng) {
       const pool = bag.length > 0 ? bag : CLUB_PRESETS;
       const club = pool.find((c) => c.id === selectedClubId) ?? pool[0];
       const lieMeta = getLieMeta(selectedLie);
@@ -681,6 +672,94 @@ export default function App() {
     }
     setTargetPin(null);
   }, [bag, geo.position, targetPin]);
+
+  // Track Shot manually (begins live walking tracking until next shot/putt/tag)
+  const handleTrackShot = useCallback(() => {
+    activeNfcPuttShotIdRef.current = null;
+    const pool = bag.length > 0 ? bag : CLUB_PRESETS;
+    const club = pool.find((c) => c.id === selectedClubId) ?? pool[0];
+    const gpsFix = geo.position ?? targetPin ?? undefined;
+    const newShotId = `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    let closedShotClub: string | null = null;
+    let closedShotYards: number | null = null;
+
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      const teeLatLng = prev.holes[holeNum]?.teeLatLng;
+      let updatedShots = [...holeScore.shots];
+
+      // End previous open shot if player was tracking another shot
+      if (updatedShots.length > 0) {
+        const prevShot = updatedShots[updatedShots.length - 1];
+        if (!prevShot.endLatLng) {
+          const origin = prevShot.startLatLng ?? teeLatLng;
+          closedShotClub = prevShot.clubShortName;
+          closedShotYards = origin && gpsFix ? computeDistanceYards(origin, gpsFix) : null;
+          updatedShots = updatedShots.map((s, idx) =>
+            idx === updatedShots.length - 1
+              ? {
+                  ...s,
+                  lie: s.lie === 'green' ? 'green' : selectedLie,
+                  endLatLng: gpsFix ?? undefined,
+                  distanceYards: closedShotYards,
+                }
+              : s
+          );
+        }
+      }
+
+      const newShotStart = gpsFix ?? (updatedShots.length === 0 ? teeLatLng : undefined);
+
+      const nextShot: ShotRecord = {
+        id: newShotId,
+        holeNumber: holeNum,
+        strokeNumber: updatedShots.length + 1,
+        clubId: club.id,
+        clubName: club.name,
+        clubShortName: club.shortName,
+        lie: selectedLie,
+        direction: selectedDirection,
+        penaltyStrokes: 0,
+        distanceYards: null,
+        startLatLng: newShotStart,
+        endLatLng: undefined,
+        timestamp: Date.now(),
+        source: 'manual',
+        isPutt: false,
+      };
+
+      const resolved = resolveHoleShotsPutts([...updatedShots, nextShot]);
+      const nextPutts = resolved.filter((s) => s.isPutt).length;
+
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: resolved,
+            manualPutts: nextPutts,
+          },
+        },
+      };
+    });
+
+    setPendingStartLatLng(gpsFix ?? null);
+    const closedSummary =
+      closedShotClub !== null
+        ? closedShotYards !== null
+          ? `Ended ${closedShotClub} (${closedShotYards} yds) · `
+          : `Ended ${closedShotClub} · `
+        : '';
+    setLastNfcFeedback(
+      `${closedSummary}Tracking ${club.name} (${club.shortName})${
+        gpsFix ? ' · Walking...' : ' · Waiting for GPS fix'
+      }`
+    );
+  }, [bag, selectedClubId, selectedLie, selectedDirection, geo.position, targetPin]);
 
   const handleQuickLogFromMap = useCallback(
     (endLatLng: LatLngLiteral, startLatLng: LatLngLiteral | null, yards: number | null) => {
@@ -1521,22 +1600,6 @@ export default function App() {
             </button>
           )}
 
-          {/* Pocket Shield Mode button */}
-          <button
-            type="button"
-            onClick={pocketMode.togglePocketShield}
-            className={`h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-2xs active:scale-95 ${
-              pocketMode.isPocketShieldActive
-                ? 'border-purple-500 bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
-            }`}
-            title="Pocket Shield: Dim OLED screen & lock touches to keep Web NFC active in pocket"
-            aria-label="Toggle pocket shield mode"
-          >
-            <Shield className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" />
-            <span className="hidden sm:inline">Pocket Shield</span>
-          </button>
-
           {/* Dark Mode Toggle */}
           <button
             type="button"
@@ -1651,7 +1714,7 @@ export default function App() {
                 onAddPutt={handleAddPutt}
                 onUpdateShot={handleUpdateShot}
                 onAddPenalty={handleAddPenalty}
-                onEnterPocketShield={pocketMode.enterPocketShield}
+                onTrackShot={handleTrackShot}
                 onDeleteShot={handleDeleteShot}
                 onUndoLastShot={handleUndoLastShot}
                 onPrevHole={() => handleChangeHole(round.currentHole - 1)}
@@ -1807,14 +1870,6 @@ export default function App() {
         accuracyMeters={geo.accuracyMeters}
       />
 
-      {/* OLED Pocket Shield (Touch-Lock overlay with Web NFC active) */}
-      <PocketShield
-        isActive={pocketMode.isPocketShieldActive}
-        onExit={pocketMode.exitPocketShield}
-        holeNumber={round.currentHole}
-        par={currentHoleData.par}
-        lastNfcFeedback={lastNfcFeedback}
-      />
     </div>
   );
 }

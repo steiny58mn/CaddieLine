@@ -12,7 +12,6 @@ import {
   Radio,
   RotateCcw,
   Ruler,
-  Shield,
   Trash2,
   Trees,
   Waves,
@@ -70,7 +69,7 @@ interface ShotLoggerPanelProps {
   onOpenBagNfc: () => void;
   onUpdateShot?: (shotId: string, updates: Partial<ShotRecord>) => void;
   onAddPenalty: () => void;
-  onEnterPocketShield?: () => void;
+  onTrackShot: () => void;
 }
 
 const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -260,7 +259,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onOpenBagNfc,
   onUpdateShot,
   onAddPenalty,
-  onEnterPocketShield,
+  onTrackShot,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
   const [editingShot, setEditingShot] = useState<ShotRecord | null>(null);
@@ -275,7 +274,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const { isInstalled } = usePWAInstall();
 
   const lastShot = holeScore.shots[holeScore.shots.length - 1];
-  const hasOpenNfcShot = Boolean(lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng);
+  const hasOpenShot = Boolean(lastShot && !lastShot.endLatLng);
   const canUndo = holeScore.shots.length > 0 || holeScore.manualPutts > 0;
 
   // Filter clubs by category for quick-tap bar
@@ -400,11 +399,31 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               <span className="text-[11px] font-mono font-bold">{puttsCount}</span>
             </div>
 
-            {penaltiesCount > 0 && (
-              <div className="px-2 py-1 rounded-xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 flex items-center gap-1 text-rose-700 dark:text-rose-300 text-[11px] font-mono font-bold">
-                +{penaltiesCount} Pen
-              </div>
-            )}
+            {/* Quick +1 Penalty button */}
+            <button
+              type="button"
+              onClick={onAddPenalty}
+              className={`h-8 px-2 rounded-xl border flex items-center gap-1 text-[11px] font-mono font-bold transition-all active:scale-95 shadow-2xs ${
+                penaltiesCount > 0
+                  ? 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/60 text-rose-700 dark:text-rose-300'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-rose-600 hover:border-rose-300'
+              }`}
+              title="Add 1 Penalty Stroke (+1 Pen)"
+            >
+              <Ban className="w-3.5 h-3.5 text-rose-500" />
+              <span>{penaltiesCount > 0 ? `+${penaltiesCount} Pen` : '+Pen'}</span>
+            </button>
+
+            {/* Log Shot Button placed at the top next to the shot and putt counts */}
+            <button
+              type="button"
+              onClick={onLogShot}
+              className="h-8 px-2.5 sm:px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.96] text-white font-extrabold text-xs inline-flex items-center gap-1.5 shadow-sm shadow-emerald-600/30 transition-all shrink-0"
+              title={hasOpenShot ? 'Finish Shot' : 'Log Shot'}
+            >
+              <Flag className="w-3.5 h-3.5 fill-current" />
+              <span>{hasOpenShot ? 'Finish' : 'Log Shot'}</span>
+            </button>
           </div>
 
           {/* Live Shot / Previous Shot readout */}
@@ -497,7 +516,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
       {/* Main Scrollable Body */}
       <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3.5">
         {/* Active NFC / GPS Tracking Banner */}
-        {hasOpenNfcShot && (
+        {hasOpenShot && (
           <div className="rounded-2xl p-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-between gap-3 animate-in fade-in duration-200">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="relative w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
@@ -519,7 +538,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                   ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix}`
                   : 'Walking...'}
               </div>
-              <div className="text-[10px] text-emerald-100 opacity-90">Scan next club tag</div>
+              <div className="text-[10px] text-emerald-100 opacity-90">Track next shot or scan tag</div>
             </div>
           </div>
         )}
@@ -530,46 +549,6 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             <span>{lastNfcFeedback}</span>
           </div>
         )}
-
-        {/* Club Selection Dropdown */}
-        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
-          <div className="flex items-center justify-between gap-2">
-            <label htmlFor="club-select-dropdown" className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-              <span>Club:</span>
-              <span className="text-emerald-700 dark:text-emerald-400 font-black">
-                {selectedClub?.shortName}
-              </span>
-              <span className="text-slate-400 font-normal">({selectedClub?.name})</span>
-            </label>
-
-            {bag.length === 0 ? (
-              <button
-                type="button"
-                onClick={onOpenBagNfc}
-                className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline whitespace-nowrap"
-              >
-                + Pair Bag Tags
-              </button>
-            ) : (
-              <span className="text-[11px] font-mono text-slate-500 tabular-nums">
-                Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
-              </span>
-            )}
-          </div>
-
-          <select
-            id="club-select-dropdown"
-            value={selectedClubId}
-            onChange={(e) => onSelectClub(e.target.value)}
-            className="w-full h-11 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-          >
-            {availableClubs.map((club) => (
-              <option key={club.id} value={club.id}>
-                {club.shortName} · {club.name} ({formatDistanceValue(club.typicalYards, unit)} {suffix})
-              </option>
-            ))}
-          </select>
-        </div>
 
         {/* Shot Lie / Landing Spot (Colorful Tactile Grid) */}
         <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
@@ -606,24 +585,31 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         </div>
 
-        {/* Direction, Log Shot, & Undo in the SAME ROW with icons */}
-        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-              Flight Direction & Shot Action
-            </span>
-            <span className="text-xs font-bold capitalize text-slate-500 dark:text-slate-400">
-              {selectedDirection}
-            </span>
-          </div>
+        {/* Unified Action Row: Club Dropdown, Direction Buttons, Track Shot, Track Putt, Undo */}
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-2 sm:p-2.5 shadow-2xs">
+          <div className="flex items-center gap-1.5 w-full">
+            {/* Club Select Dropdown */}
+            <select
+              id="club-select-dropdown"
+              value={selectedClubId}
+              onChange={(e) => onSelectClub(e.target.value)}
+              className="h-11 min-w-0 flex-1 px-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-bold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 truncate"
+              title="Select Club"
+              aria-label="Select Club"
+            >
+              {availableClubs.map((club) => (
+                <option key={club.id} value={club.id}>
+                  {club.shortName} · {club.name}
+                </option>
+              ))}
+            </select>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Direction icons (Left, Straight, Right) */}
-            <div className="flex-1 grid grid-cols-3 gap-1 sm:gap-1.5" role="group" aria-label="Shot direction">
+            {/* Flight Direction Icons */}
+            <div className="flex items-center gap-0.5 shrink-0" role="group" aria-label="Shot direction">
               <button
                 type="button"
                 onClick={() => onSelectDirection('left')}
-                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                   selectedDirection === 'left'
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                     : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -631,13 +617,13 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 title="Left"
                 aria-label="Left"
               >
-                <CurvedLeftArrowIcon className="w-5 h-5" />
+                <CurvedLeftArrowIcon className="w-4 h-4" />
               </button>
 
               <button
                 type="button"
                 onClick={() => onSelectDirection('straight')}
-                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                   selectedDirection === 'straight'
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                     : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -645,13 +631,13 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 title="Straight"
                 aria-label="Straight"
               >
-                <StraightUpArrowIcon className="w-5 h-5" />
+                <StraightUpArrowIcon className="w-4 h-4" />
               </button>
 
               <button
                 type="button"
                 onClick={() => onSelectDirection('right')}
-                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                   selectedDirection === 'right'
                     ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                     : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -659,70 +645,44 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 title="Right"
                 aria-label="Right"
               >
-                <CurvedRightArrowIcon className="w-5 h-5" />
+                <CurvedRightArrowIcon className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Log Shot Button (Icon) */}
+            {/* Track Shot Button */}
             <button
               type="button"
-              onClick={onLogShot}
-              className="h-12 w-14 sm:w-16 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.96] text-white shadow-md shadow-emerald-600/30 flex items-center justify-center shrink-0 transition-all"
-              title={hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}
-              aria-label={hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}
+              onClick={onTrackShot}
+              className="h-11 px-2 sm:px-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.96] text-white font-extrabold text-xs inline-flex items-center gap-1 shadow-sm shadow-emerald-600/30 shrink-0 transition-all whitespace-nowrap"
+              title="Start tracking shot distance until next shot"
             >
-              <Flag className="w-5 h-5 fill-current" />
+              <Radio className="w-3.5 h-3.5 shrink-0" />
+              <span>Track Shot</span>
             </button>
 
-            {/* Undo Button (Icon) */}
+            {/* Track Putt Button */}
+            <button
+              type="button"
+              onClick={onAddPutt}
+              className="h-11 px-2 sm:px-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.96] text-white font-extrabold text-xs inline-flex items-center gap-1 shadow-sm shadow-teal-500/30 shrink-0 transition-all whitespace-nowrap"
+              title="Track a putt"
+            >
+              <PutterIcon className="w-3.5 h-3.5 shrink-0" />
+              <span>Track Putt</span>
+            </button>
+
+            {/* Undo Shot Button */}
             <button
               type="button"
               onClick={onUndoLastShot}
               disabled={!canUndo}
-              className="h-12 w-12 sm:w-14 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shrink-0 transition-all shadow-2xs"
+              className="h-11 w-9 sm:w-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shrink-0 transition-all shadow-2xs active:scale-95"
               title="Undo Last Shot"
               aria-label="Undo Last Shot"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
           </div>
-        </div>
-
-        {/* Quick Modifiers: +1 Putt, +1 Penalty, & Pocket Shield */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-0.5">
-          {/* +1 PUTT BUTTON */}
-          <button
-            type="button"
-            onClick={onAddPutt}
-            className="h-12 rounded-xl bg-gradient-to-r from-teal-500 via-teal-600 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-teal-500/25 transition-all"
-          >
-            <PutterIcon className="w-4 h-4" />
-            <span>+1 Putt</span>
-          </button>
-
-          {/* QUICK BUTTON TO ADD A PENALTY STROKE */}
-          <button
-            type="button"
-            onClick={onAddPenalty}
-            className="h-12 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/80 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 active:scale-[0.98] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-2xs transition-all"
-            title="Add 1 Penalty Stroke (+1 Pen)"
-          >
-            <Ban className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-            <span>+1 Penalty</span>
-          </button>
-
-          {/* POCKET SHIELD BUTTON */}
-          {onEnterPocketShield && (
-            <button
-              type="button"
-              onClick={onEnterPocketShield}
-              className="col-span-2 sm:col-span-1 h-12 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-900/40 text-purple-800 dark:text-purple-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-              title="Pocket Shield: Dim OLED screen & lock touches while Web NFC scans"
-            >
-              <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-              <span>Pocket Shield</span>
-            </button>
-          )}
         </div>
 
         {/* Shot Log Feed for Current Hole */}
@@ -758,9 +718,8 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs bg-white dark:bg-slate-900">
               {holeScore.shots.map((shot: ShotRecord, idx) => {
                 const lieMeta = getLieMeta(shot.lie);
-                const isActiveOpenNfc =
+                const isActiveOpenShot =
                   idx === holeScore.shots.length - 1 &&
-                  shot.source === 'nfc' &&
                   !shot.endLatLng;
                 const isPutt = isShotPutt(shot);
                 const displayDistance =
@@ -768,9 +727,9 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                     ? `${formatDistanceValue(shot.distanceYards, unit)} ${suffix}`
                     : isPutt
                       ? 'Green'
-                      : isActiveOpenNfc && autoDetectedDistanceYards !== null
+                      : isActiveOpenShot && autoDetectedDistanceYards !== null
                         ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live)`
-                        : isActiveOpenNfc
+                        : isActiveOpenShot
                           ? 'Tracking GPS'
                           : 'GPS waiting';
 
@@ -778,7 +737,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                   <div
                     key={shot.id}
                     className={`px-3 py-2.5 flex items-center justify-between gap-2 transition-colors ${
-                      isActiveOpenNfc
+                      isActiveOpenShot
                         ? 'bg-emerald-50/70 dark:bg-emerald-950/40'
                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
@@ -807,7 +766,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                               color: lieMeta.dotColor,
                             }}
                           >
-                            {isActiveOpenNfc ? 'In Progress' : lieMeta.label}
+                            {isActiveOpenShot ? 'In Progress' : lieMeta.label}
                           </span>
                           {isPutt && (
                             <span className="text-[10px] font-bold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 px-1 rounded">
