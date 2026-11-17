@@ -1,16 +1,21 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Ban,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Crosshair,
+  Edit3,
   Flag,
   History,
+  Radio,
   RotateCcw,
+  Ruler,
   Trash2,
   Trees,
   Waves,
+  Zap,
 } from 'lucide-react';
 import {
   Club,
@@ -35,6 +40,7 @@ import {
 } from '../utils/golfMath';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { PWAInstallButton } from './PWAInstallButton';
+import { EditShotModal } from './EditShotModal';
 
 interface ShotLoggerPanelProps {
   holeData: HolePinData;
@@ -61,6 +67,8 @@ interface ShotLoggerPanelProps {
   onPrevHole: () => void;
   onNextHole: () => void;
   onOpenBagNfc: () => void;
+  onUpdateShot?: (shotId: string, updates: Partial<ShotRecord>) => void;
+  onOpenTapeMeasure?: () => void;
 }
 
 const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -79,12 +87,12 @@ const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' })
   </svg>
 );
 
-const CurvedLeftArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+const CurvedLeftArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth="2.15"
+    strokeWidth="2.2"
     strokeLinecap="round"
     strokeLinejoin="round"
     className={className}
@@ -95,12 +103,12 @@ const CurvedLeftArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-
   </svg>
 );
 
-const StraightUpArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+const StraightUpArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth="2.15"
+    strokeWidth="2.2"
     strokeLinecap="round"
     strokeLinejoin="round"
     className={className}
@@ -111,12 +119,12 @@ const StraightUpArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-
   </svg>
 );
 
-const CurvedRightArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-[18px] h-[18px]' }) => (
+const CurvedRightArrowIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
   <svg
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth="2.15"
+    strokeWidth="2.2"
     strokeLinecap="round"
     strokeLinejoin="round"
     className={className}
@@ -139,7 +147,7 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-emerald-600'}`}
+          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-emerald-600 dark:text-emerald-400'}`}
           aria-hidden="true"
         >
           <path d="M6 20 9 4h6l3 16" />
@@ -148,7 +156,7 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
         </svg>
       );
     case 'green':
-      return <Flag className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-teal-600'}`} />;
+      return <Flag className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-teal-600 dark:text-teal-400'}`} />;
     case 'fringe':
       return (
         <svg
@@ -156,7 +164,7 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
-          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-lime-600'}`}
+          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-lime-600 dark:text-lime-400'}`}
           aria-hidden="true"
         >
           <circle cx="12" cy="12" r="8" strokeDasharray="3 2" />
@@ -164,6 +172,8 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
         </svg>
       );
     case 'rough':
+    case 'left_rough':
+    case 'right_rough':
       return (
         <svg
           viewBox="0 0 24 24"
@@ -171,7 +181,7 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
-          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-amber-600'}`}
+          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-amber-600 dark:text-amber-400'}`}
           aria-hidden="true"
         >
           <path d="M6 19c0-5 1-8 3-11" />
@@ -180,7 +190,9 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
         </svg>
       );
     case 'trees':
-      return <Trees className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-orange-600'}`} />;
+    case 'left_trees':
+    case 'right_trees':
+      return <Trees className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-emerald-800 dark:text-emerald-300'}`} />;
     case 'sand':
       return (
         <svg
@@ -190,22 +202,34 @@ const LandingSpotIcon: React.FC<{ lie: ShotLie; active: boolean }> = ({ lie, act
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-yellow-600'}`}
+          className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-yellow-600 dark:text-yellow-400'}`}
           aria-hidden="true"
         >
-          <path d="M4 16c2-5 6-7 10-5 2.5 1.2 4 0 6-2v7c-2 2-5 3-9 3-4.5 0-7-1.2-7-3Z" />
+          <path d="M3 17c3-3 7-3 10 0s7 3 10 0" />
+          <circle cx="8" cy="9" r="1.5" fill="currentColor" />
+          <circle cx="14" cy="7" r="1.5" fill="currentColor" />
+          <circle cx="17" cy="11" r="1.5" fill="currentColor" />
         </svg>
       );
     case 'water':
-      return <Waves className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-sky-600'}`} />;
+      return <Waves className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-sky-600 dark:text-sky-400'}`} />;
     case 'ob':
-      return <Ban className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-rose-600'}`} />;
+      return <Ban className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-rose-600 dark:text-rose-400'}`} />;
     case 'holed':
-      return <CheckCircle2 className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-emerald-700'}`} />;
+      return <CheckCircle2 className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-violet-600 dark:text-violet-400'}`} />;
     default:
-      return <Flag className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-slate-600'}`} />;
+      return <Flag className={`w-4 h-4 shrink-0 ${strokeClass ?? 'text-slate-500'}`} />;
   }
 };
+
+const CATEGORY_TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'wood', label: 'Woods', color: 'from-blue-600 to-indigo-600' },
+  { id: 'hybrid', label: 'Hybrids', color: 'from-purple-600 to-indigo-600' },
+  { id: 'iron', label: 'Irons', color: 'from-emerald-600 to-teal-600' },
+  { id: 'wedge', label: 'Wedges', color: 'from-amber-500 to-orange-600' },
+  { id: 'putter', label: 'Putter', color: 'from-rose-500 to-pink-600' },
+];
 
 export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   holeData,
@@ -232,8 +256,13 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onPrevHole,
   onNextHole,
   onOpenBagNfc,
+  onUpdateShot,
+  onOpenTapeMeasure,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
+  const [editingShot, setEditingShot] = useState<ShotRecord | null>(null);
+  const [clubCategoryFilter, setClubCategoryFilter] = useState<string>('all');
+
   const holeStrokes = getHoleStrokes(holeScore);
   const puttsCount = getEffectivePutts(holeScore);
   const penaltiesCount = getHolePenalties(holeScore);
@@ -246,11 +275,27 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const hasOpenNfcShot = Boolean(lastShot && lastShot.source === 'nfc' && !lastShot.endLatLng);
   const canUndo = holeScore.shots.length > 0 || holeScore.manualPutts > 0;
 
+  // Filter clubs by category for quick-tap bar
+  const displayedClubs = useMemo(() => {
+    if (clubCategoryFilter === 'all') return availableClubs;
+    return availableClubs.filter((c) => c.category === clubCategoryFilter);
+  }, [availableClubs, clubCategoryFilter]);
+
+  // Par styling badge
+  const parBadgeColor =
+    holeData.par === 3
+      ? 'from-sky-500 to-blue-600 text-white'
+      : holeData.par === 5
+        ? 'from-amber-500 to-orange-600 text-white'
+        : 'from-emerald-600 to-teal-700 text-white';
+
   return (
-    <div className="flex flex-col h-full bg-white lg:border-r border-slate-200">
-      {/* Hole Navigation Header (Read-only API Par + Putt Button + Live Shot Distance & Previous Shot) */}
-      <div className="relative shrink-0 px-3 sm:px-4 py-2.5 border-b border-slate-200 bg-[#FAFBFA] space-y-2">
-        <div className="flex items-center justify-between w-full gap-2">
+    <div className="flex flex-col h-full bg-[#f8faf8] dark:bg-[#07100a] lg:border-r border-slate-200 dark:border-slate-800/80 select-none">
+      {/* Hero Hole Card */}
+      <div className="relative shrink-0 p-3 sm:p-4 bg-gradient-to-b from-white via-white to-slate-50/70 dark:from-[#0d1810] dark:via-[#0c160f] dark:to-[#09120c] border-b border-slate-200/90 dark:border-slate-800/90 shadow-2xs">
+        {/* Top Hole Control Strip */}
+        <div className="flex items-center justify-between gap-2">
+          {/* Prev Hole Button */}
           <button
             type="button"
             onClick={() => {
@@ -258,94 +303,57 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               onPrevHole();
             }}
             disabled={holeData.holeNumber <= 1}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors shrink-0"
+            className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-2xs shrink-0"
             aria-label="Previous hole"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
 
-          <div className="px-1 min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
+          {/* Hole Title & Par / Distance Pills */}
+          <div className="flex-1 min-w-0 text-center">
+            <div className="flex items-center justify-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setIsHolePickerOpen((prev) => !prev)}
-                className="font-display text-lg font-bold text-[#0F1A14] hover:text-emerald-800 inline-flex items-center gap-1 rounded-lg px-1 -ml-1 py-0.5 hover:bg-slate-200/60 transition-colors"
+                className="group inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 border border-slate-200/80 dark:border-slate-700/80 transition-all active:scale-95"
                 aria-expanded={isHolePickerOpen}
-                aria-label="Choose hole number"
               >
-                <span>Hole {holeData.holeNumber}</span>
+                <span className="font-display text-base sm:text-lg font-black tracking-tight text-[#0F1A14] dark:text-slate-100">
+                  Hole {holeData.holeNumber}
+                </span>
                 <ChevronDown
-                  className={`w-4 h-4 text-slate-500 transition-transform ${
-                    isHolePickerOpen ? 'rotate-180' : ''
+                  className={`w-3.5 h-3.5 text-slate-500 transition-transform ${
+                    isHolePickerOpen ? 'rotate-180 text-emerald-600' : ''
                   }`}
                 />
               </button>
-              <span className="text-slate-300" aria-hidden="true">
-                ·
+
+              <span
+                className={`px-2.5 py-0.5 rounded-lg text-xs font-black font-mono tracking-tight bg-gradient-to-r shadow-xs ${parBadgeColor}`}
+              >
+                PAR {holeData.par}
               </span>
-              <span className="text-xs font-mono font-bold text-[#0F1A14]">
-                Par {holeData.par}
-              </span>
-              <span className="text-slate-300" aria-hidden="true">
-                ·
-              </span>
-              <span className="text-xs font-mono text-slate-500 tabular-nums">
+
+              <span className="px-2 py-0.5 rounded-lg text-xs font-bold font-mono bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                 {formatDistanceValue(holeData.yardage, unit)} {suffix}
               </span>
-              {(() => {
-                if (!subCourseName) return null;
-                if (subCourseName.includes('/')) {
-                  const [frontRaw, backRaw] = subCourseName.split('/').map((s) => s.trim());
-                  const isBack = holeData.holeNumber > 9;
-                  const loopLabel = isBack ? backRaw : frontRaw;
-                  const localHole = isBack ? holeData.holeNumber - 9 : holeData.holeNumber;
-                  if (!loopLabel) return null;
-                  return (
-                    <>
-                      <span className="text-slate-300" aria-hidden="true">
-                        ·
-                      </span>
-                      <span className="text-xs font-semibold text-emerald-800 whitespace-nowrap">
-                        {loopLabel} #{localHole}
-                      </span>
-                    </>
-                  );
-                }
-                return (
-                  <>
-                    <span className="text-slate-300" aria-hidden="true">
-                      ·
-                    </span>
-                    <span className="text-xs font-semibold text-emerald-800 whitespace-nowrap">
-                      {subCourseName}
-                    </span>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5 tabular-nums truncate">
-              Hole: <strong className="text-[#0F1A14]">{holeStrokes || '—'}</strong>{' '}
-              {holeStrokes > 0 && `(${getScoreLabel(holeStrokes, holeData.par)})`}
-              {puttsCount > 0 && (
-                <span className="ml-2 text-slate-500">
-                  · <strong className="text-[#0F1A14]">{puttsCount}</strong>{' '}
-                  {puttsCount === 1 ? 'putt' : 'putts'}
+
+              {holeData.handicap > 0 && (
+                <span className="hidden xs:inline px-1.5 py-0.5 rounded text-[10px] font-bold font-mono text-slate-500 bg-slate-100 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                  HCP {holeData.handicap}
                 </span>
               )}
             </div>
+
+            {/* Loop Sub-course Label if applicable */}
+            {subCourseName && (
+              <div className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-400 truncate mt-1">
+                {subCourseName}
+              </div>
+            )}
           </div>
 
-          <button
-            type="button"
-            onClick={onAddPutt}
-            className="min-h-[44px] px-3 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
-            title="Add 1 Putt on Green"
-            aria-label="Add putt"
-          >
-            <PutterIcon className="w-4 h-4 text-emerald-700" />
-            <span>+ Putt</span>
-          </button>
-
+          {/* Next Hole Button */}
           <button
             type="button"
             onClick={() => {
@@ -353,59 +361,87 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               onNextHole();
             }}
             disabled={holeData.holeNumber >= 18}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition-colors shrink-0"
+            className="w-10 h-10 flex items-center justify-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-all active:scale-95 shadow-2xs shrink-0"
             aria-label="Next hole"
           >
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Centered Live Shot Distance + Previous Shot Strip inside Hole Panel */}
-        <div className="pt-1.5 border-t border-slate-200/80 flex items-center justify-center flex-wrap gap-x-3 gap-y-1 text-[11px] leading-tight text-center">
-          <div className="inline-flex items-center gap-1.5 font-mono tabular-nums shrink-0">
-            <span
-              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                autoDetectedDistanceYards !== null ? 'bg-emerald-600 animate-pulse' : 'bg-slate-300'
-              }`}
-              aria-hidden="true"
-            />
-            <span className="text-slate-500 font-sans font-medium">Shot:</span>
-            <strong className="text-[#0F1A14] font-bold">
-              {autoDetectedDistanceYards !== null
-                ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix}`
-                : `-- ${suffix}`}
-            </strong>
+        {/* Athletic Hole Status Ribbon */}
+        <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between gap-2">
+          {/* Live Hole Score Summary */}
+          <div className="flex items-center gap-2">
+            <div className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 shadow-2xs">
+              <span className="text-[11px] font-medium text-slate-500">Strokes:</span>
+              <span className="font-mono font-black text-sm text-[#0F1A14] dark:text-white">
+                {holeStrokes || 0}
+              </span>
+              {holeStrokes > 0 && (
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
+                    holeStrokes - holeData.par < 0
+                      ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                      : holeStrokes - holeData.par === 0
+                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300'
+                  }`}
+                >
+                  {getScoreLabel(holeStrokes, holeData.par)}
+                </span>
+              )}
+            </div>
+
+            <div className="px-2 py-1 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/50 flex items-center gap-1 text-teal-800 dark:text-teal-300 shadow-2xs">
+              <PutterIcon className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+              <span className="text-[11px] font-mono font-bold">{puttsCount}</span>
+            </div>
+
+            {penaltiesCount > 0 && (
+              <div className="px-2 py-1 rounded-xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/50 flex items-center gap-1 text-rose-700 dark:text-rose-300 text-[11px] font-mono font-bold">
+                +{penaltiesCount} Pen
+              </div>
+            )}
           </div>
 
-          <span className="text-slate-300" aria-hidden="true">
-            |
-          </span>
-
-          <div className="inline-flex items-center gap-1 min-w-0 max-w-full text-slate-600">
-            <History className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            {previousShot ? (
-              <span className="truncate tabular-nums">
-                <span className="text-slate-500">Prev H{previousShot.holeNumber} #{previousShot.strokeNumber}:</span>{' '}
-                <strong className="text-[#0F1A14] font-semibold">{previousShot.clubShortName}</strong>
+          {/* Live Shot / Previous Shot readout */}
+          <div className="flex items-center gap-2 text-right">
+            {autoDetectedDistanceYards !== null ? (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-bold animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-radar" />
+                <span>
+                  {formatDistanceValue(autoDetectedDistanceYards, unit)} {suffix}
+                </span>
+              </div>
+            ) : previousShot ? (
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[140px] sm:max-w-[180px]">
+                <span className="opacity-75">Last:</span>{' '}
+                <strong className="text-slate-800 dark:text-slate-200 font-bold">
+                  {previousShot.clubShortName}
+                </strong>
                 {previousShot.distanceYards !== null && (
-                  <span className="font-mono font-semibold text-emerald-800">
-                    {' '}
-                    · {formatDistanceValue(previousShot.distanceYards, unit)} {suffix}
+                  <span className="text-emerald-700 dark:text-emerald-400 font-mono font-semibold">
+                    {' · '}
+                    {formatDistanceValue(previousShot.distanceYards, unit)}
+                    {suffix}
                   </span>
                 )}
-                <span className="text-slate-500"> · {getLieMeta(previousShot.lie).shortLabel}</span>
-              </span>
-            ) : (
-              <span className="text-slate-400">Prev: —</span>
-            )}
+              </div>
+            ) : null}
           </div>
         </div>
 
+        {/* Hole Dropdown Picker Grid */}
         {isHolePickerOpen && (
-          <div className="absolute left-3 right-3 top-full mt-1.5 z-30 rounded-2xl bg-white border border-slate-200 shadow-xl p-3">
+          <div className="absolute left-3 right-3 top-full mt-2 z-40 rounded-2xl bg-white/95 dark:bg-[#0f1d13]/95 backdrop-blur-md border border-slate-200 dark:border-slate-800 shadow-2xl p-3 animate-in fade-in zoom-in-95 duration-100">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold text-slate-700">Select Hole</span>
-              <span className="text-[11px] text-emerald-700 font-medium">● Mapped</span>
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                Switch Hole
+              </span>
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Mapped Hole
+              </span>
             </div>
             <div className="grid grid-cols-6 gap-1.5">
               {Array.from({ length: 18 }, (_, idx) => idx + 1).map((num) => {
@@ -421,23 +457,27 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                       onSelectHole(num);
                       setIsHolePickerOpen(false);
                     }}
-                    className={`min-h-[44px] rounded-xl border text-center flex flex-col items-center justify-center transition-colors relative ${
+                    className={`min-h-[46px] rounded-xl border text-center flex flex-col items-center justify-center transition-all relative ${
                       active
-                        ? 'bg-emerald-700 border-emerald-700 text-white font-bold'
-                        : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-emerald-50'
+                        ? 'bg-gradient-to-br from-emerald-600 to-teal-700 border-emerald-600 text-white font-black shadow-md shadow-emerald-600/30'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-slate-800'
                     }`}
                   >
-                    <span className="text-xs font-mono leading-none">{num}</span>
+                    <span className="text-xs font-mono font-bold leading-none">{num}</span>
                     <span
                       className={`text-[10px] font-mono leading-none mt-1 ${
-                        active ? 'text-emerald-100' : 'text-slate-500'
+                        active
+                          ? 'text-emerald-100 font-bold'
+                          : strokes > 0
+                            ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                            : 'text-slate-400 dark:text-slate-500'
                       }`}
                     >
                       {strokes > 0 ? strokes : `P${h?.par ?? 4}`}
                     </span>
                     {isMapped && (
                       <span
-                        className={`w-1.5 h-1.5 rounded-full absolute top-1 right-1 ${
+                        className={`w-1.5 h-1.5 rounded-full absolute top-1.5 right-1.5 ${
                           active ? 'bg-white' : 'bg-emerald-500'
                         }`}
                         aria-hidden="true"
@@ -451,165 +491,147 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
         )}
       </div>
 
-      {/* Scrollable Shot Logger Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
-        {lastNfcFeedback && (
-          <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2 text-xs text-emerald-950 font-medium">
-            {lastNfcFeedback}
+      {/* Main Scrollable Body */}
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3.5">
+        {/* Active NFC / GPS Tracking Banner */}
+        {hasOpenNfcShot && (
+          <div className="rounded-2xl p-3 bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="relative w-9 h-9 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center shrink-0">
+                <Radio className="w-5 h-5 animate-pulse" />
+                <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 border-2 border-emerald-600" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold uppercase tracking-wider text-emerald-100">
+                  Tracking Live Shot #{holeScore.shots.length}
+                </div>
+                <div className="text-sm font-extrabold truncate">
+                  {lastShot.clubName} ({lastShot.clubShortName})
+                </div>
+              </div>
+            </div>
+            <div className="text-right shrink-0 font-mono">
+              <div className="text-lg font-black tabular-nums">
+                {autoDetectedDistanceYards !== null
+                  ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix}`
+                  : 'Walking...'}
+              </div>
+              <div className="text-[10px] text-emerald-100 opacity-90">Scan next club tag</div>
+            </div>
           </div>
         )}
 
-        {/* Single-Row Club Selected, Direction Arrows, Flag Log Shot & Undo Panel */}
-        <div className="rounded-2xl border border-slate-200 bg-[#FAFBFA] p-2.5 sm:p-3 space-y-2">
+        {lastNfcFeedback && (
+          <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 px-3.5 py-2 text-xs text-emerald-950 dark:text-emerald-200 font-semibold flex items-center gap-2">
+            <Zap className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{lastNfcFeedback}</span>
+          </div>
+        )}
+
+        {/* Quick Club Selection Strip */}
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2.5 shadow-2xs">
           <div className="flex items-center justify-between gap-2">
-            <label htmlFor="club-selected-dropdown" className="text-xs font-semibold text-slate-700">
-              Club Selected & Direction
+            <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <span>Club:</span>
+              <span className="text-emerald-700 dark:text-emerald-400 font-black">
+                {selectedClub?.shortName}
+              </span>
+              <span className="text-slate-400 font-normal">({selectedClub?.name})</span>
             </label>
+
             {bag.length === 0 ? (
               <button
                 type="button"
                 onClick={onOpenBagNfc}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
+                className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline whitespace-nowrap"
               >
-                Pair Saved Clubs →
+                + Pair Bag Tags
               </button>
             ) : (
-              <span className="text-xs font-mono text-slate-500 tabular-nums">
+              <span className="text-[11px] font-mono text-slate-500 tabular-nums">
                 Avg {formatDistanceValue(selectedClub?.typicalYards, unit)} {suffix}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            <select
-              id="club-selected-dropdown"
-              value={selectedClub?.id ?? ''}
-              onChange={(e) => onSelectClub(e.target.value)}
-              className="flex-1 min-w-0 h-11 px-2 rounded-xl border border-slate-300 bg-white text-xs sm:text-sm font-semibold text-[#0F1A14] focus:outline-none focus:ring-2 focus:ring-emerald-600"
-            >
-              {bag.length > 0 ? (
-                bag.map((club) => (
-                  <option key={club.id} value={club.id}>
-                    {club.shortName} · {club.name}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="" disabled>
-                    No clubs paired
-                  </option>
-                  {CLUB_PRESETS.map((club) => (
-                    <option key={club.id} value={club.id}>
-                      {club.shortName} · {club.name}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
+          {/* Category Filter Pills */}
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
+            {CATEGORY_TABS.map((cat) => {
+              const active = clubCategoryFilter === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setClubCategoryFilter(cat.id)}
+                  className={`h-7 px-2.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
+                    active
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
 
-            <div
-              className="inline-flex items-center gap-1 sm:gap-1.5 shrink-0"
-              role="group"
-              aria-label="Shot direction"
-            >
-              <button
-                type="button"
-                onClick={() => onSelectDirection('left')}
-                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
-                  selectedDirection === 'left'
-                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-                aria-label="Left direction"
-                title="Left"
-              >
-                <CurvedLeftArrowIcon />
-              </button>
-              <button
-                type="button"
-                onClick={() => onSelectDirection('straight')}
-                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
-                  selectedDirection === 'straight'
-                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-                aria-label="Straight direction"
-                title="Straight"
-              >
-                <StraightUpArrowIcon />
-              </button>
-              <button
-                type="button"
-                onClick={() => onSelectDirection('right')}
-                className={`h-11 w-[42px] sm:w-12 rounded-xl border flex items-center justify-center transition-colors ${
-                  selectedDirection === 'right'
-                    ? 'bg-[#0F1A14] text-white border-[#0F1A14]'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-                aria-label="Right direction"
-                title="Right"
-              >
-                <CurvedRightArrowIcon />
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={onLogShot}
-              className="h-11 w-[42px] sm:w-12 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-[0.98] text-white shadow-sm flex items-center justify-center shrink-0 transition-all"
-              title={
-                hasOpenNfcShot
-                  ? `Finish Shot #${holeScore.shots.length} · ${lastShot.clubShortName} (${getLieMeta(selectedLie).shortLabel})`
-                  : `Log Shot #${holeScore.shots.length + 1} · ${selectedClub?.shortName ?? 'Club'} (${getLieMeta(selectedLie).shortLabel})`
-              }
-              aria-label={
-                hasOpenNfcShot
-                  ? `Finish Shot ${holeScore.shots.length}`
-                  : `Log Shot ${holeScore.shots.length + 1}`
-              }
-            >
-              <Flag className="w-[18px] h-[18px]" />
-            </button>
-
-            <button
-              type="button"
-              onClick={onUndoLastShot}
-              disabled={!canUndo}
-              className="h-11 w-[42px] sm:w-12 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center shrink-0 transition-colors"
-              title="Undo last shot or putt"
-              aria-label="Undo last shot"
-            >
-              <RotateCcw className="w-[18px] h-[18px]" />
-            </button>
+          {/* Club Chips Grid */}
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-28 overflow-y-auto p-1 bg-slate-50/70 dark:bg-slate-950/40 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
+            {displayedClubs.map((club) => {
+              const isSelected = selectedClubId === club.id;
+              return (
+                <button
+                  key={club.id}
+                  type="button"
+                  onClick={() => onSelectClub(club.id)}
+                  className={`h-9 px-2 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center border ${
+                    isSelected
+                      ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-600 shadow-sm shadow-emerald-600/30 scale-[1.02]'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="leading-tight">{club.shortName}</span>
+                  <span
+                    className={`text-[9px] font-mono leading-none ${
+                      isSelected ? 'text-emerald-100' : 'text-slate-400'
+                    }`}
+                  >
+                    {club.typicalYards ? `${club.typicalYards}y` : ''}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Where Shot Landed (Unified Compact Icon Grid) */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-slate-700">Where Shot Landed</span>
-            {penaltiesCount > 0 && (
-              <span className="text-xs font-mono font-semibold text-rose-700 tabular-nums">
-                +{penaltiesCount} penalty
-              </span>
-            )}
+        {/* Shot Lie / Landing Spot (Colorful Tactile Grid) */}
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              Where Did the Shot Land?
+            </span>
+            <span className="text-[11px] font-semibold text-slate-500">
+              {getLieMeta(selectedLie).label}
+            </span>
           </div>
-          <div className="grid grid-cols-3 gap-1.5">
+
+          <div className="grid grid-cols-3 gap-2">
             {LIE_OPTIONS.map((option) => {
               const active = selectedLie === option.id;
+              const meta = getLieMeta(option.id);
               return (
                 <button
                   key={option.id}
                   type="button"
                   onClick={() => onSelectLie(option.id)}
-                  className={`min-h-[48px] px-2 py-2 rounded-xl border text-center flex flex-col items-center justify-center gap-1 transition-colors ${
+                  className={`min-h-[50px] p-2 rounded-xl border text-center flex flex-col items-center justify-center gap-1 transition-all active:scale-95 ${
                     active
-                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-sm'
-                      : 'bg-white text-slate-800 border-slate-200 hover:bg-slate-50'
+                      ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-600 shadow-md shadow-emerald-600/30 font-bold scale-[1.02]'
+                      : 'bg-slate-50/80 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
                   }`}
                 >
                   <LandingSpotIcon lie={option.id} active={active} />
-                  <span className="text-[11px] font-semibold leading-none truncate max-w-full">
+                  <span className="text-xs font-semibold leading-tight truncate max-w-full">
                     {option.shortLabel}
                   </span>
                 </button>
@@ -618,17 +640,123 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         </div>
 
+        {/* Direction Selector Strip */}
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+              Flight Direction
+            </span>
+            <span className="text-xs font-bold capitalize text-slate-600 dark:text-slate-400">
+              {selectedDirection}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Shot direction">
+            <button
+              type="button"
+              onClick={() => onSelectDirection('left')}
+              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
+                selectedDirection === 'left'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <CurvedLeftArrowIcon />
+              <span>Left</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectDirection('straight')}
+              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
+                selectedDirection === 'straight'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <StraightUpArrowIcon />
+              <span>Straight</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectDirection('right')}
+              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
+                selectedDirection === 'right'
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <CurvedRightArrowIcon />
+              <span>Right</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Ergonomic Big Primary Action Buttons */}
+        <div className="space-y-2 pt-1">
+          <div className="grid grid-cols-2 gap-2.5">
+            {/* LOG SHOT BUTTON */}
+            <button
+              type="button"
+              onClick={onLogShot}
+              className="h-14 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.98] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+            >
+              <Flag className="w-5 h-5 fill-current" />
+              <span>{hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}</span>
+            </button>
+
+            {/* +1 PUTT BUTTON */}
+            <button
+              type="button"
+              onClick={onAddPutt}
+              className="h-14 rounded-2xl bg-gradient-to-r from-teal-500 via-teal-600 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-500/30 transition-all"
+            >
+              <PutterIcon className="w-5 h-5" />
+              <span>+1 Putt</span>
+            </button>
+          </div>
+
+          {/* Secondary Quick Action Row (GPS Tape Measure & Undo) */}
+          <div className="grid grid-cols-2 gap-2">
+            {onOpenTapeMeasure && (
+              <button
+                type="button"
+                onClick={onOpenTapeMeasure}
+                className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                title="GPS Tape Measure (Feet & Inches)"
+              >
+                <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <span>GPS Tape Measure</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onUndoLastShot}
+              disabled={!canUndo}
+              className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-500" />
+              <span>Undo Last</span>
+            </button>
+          </div>
+        </div>
+
         {/* Shot Log Feed for Current Hole */}
-        <div className="pt-3 border-t border-slate-100">
+        <div className="pt-2">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-slate-700">
-              Hole {holeData.holeNumber} Shot Log ({holeScore.shots.length})
+            <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <span>Hole {holeData.holeNumber} Shot Log</span>
+              <span className="px-1.5 py-0.2 rounded-md bg-slate-200 dark:bg-slate-800 text-[10px] font-mono">
+                {holeScore.shots.length}
+              </span>
             </h3>
             {holeData.holeNumber < 18 && (
               <button
                 type="button"
                 onClick={onNextHole}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 whitespace-nowrap"
+                className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
               >
                 Finish & Next Hole →
               </button>
@@ -636,12 +764,16 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
 
           {holeScore.shots.length === 0 ? (
-            <div className="rounded-xl bg-slate-50 border border-slate-200/70 p-3 text-xs text-slate-500">
-              No shots logged on Hole {holeData.holeNumber} yet. Tap a GolfPad NFC tag on your club
-              to start tracking GPS shot distance automatically, or log a shot above.
+            <div className="rounded-2xl bg-white dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 p-4 text-xs text-slate-500 dark:text-slate-400 text-center space-y-1 shadow-2xs">
+              <div className="font-semibold text-slate-700 dark:text-slate-300">
+                No shots logged on Hole {holeData.holeNumber} yet
+              </div>
+              <div className="text-[11px] opacity-80">
+                Tap your club's GolfPad NFC tag, or tap &ldquo;Log Shot&rdquo; above.
+              </div>
             </div>
           ) : (
-            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-2xs bg-white dark:bg-slate-900">
               {holeScore.shots.map((shot: ShotRecord, idx) => {
                 const lieMeta = getLieMeta(shot.lie);
                 const isActiveOpenNfc =
@@ -655,39 +787,53 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                     : isPutt
                       ? 'Green'
                       : isActiveOpenNfc && autoDetectedDistanceYards !== null
-                        ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live GPS)`
+                        ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live)`
                         : isActiveOpenNfc
-                          ? 'Tracking GPS · scan next tag to end'
+                          ? 'Tracking GPS'
                           : 'GPS waiting';
 
                 return (
                   <div
                     key={shot.id}
-                    className={`px-3 py-2.5 flex items-center justify-between gap-2 ${
-                      isActiveOpenNfc ? 'bg-emerald-50/60' : 'bg-white'
+                    className={`px-3 py-2.5 flex items-center justify-between gap-2 transition-colors ${
+                      isActiveOpenNfc
+                        ? 'bg-emerald-50/70 dark:bg-emerald-950/40'
+                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div
+                      className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                      onClick={() => setEditingShot(shot)}
+                      role="button"
+                      tabIndex={0}
+                      title="Click to edit shot details"
+                    >
                       <span
-                        className="w-6 h-6 rounded-full text-white text-[11px] font-bold flex items-center justify-center shrink-0"
+                        className="w-7 h-7 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0 shadow-xs"
                         style={{ backgroundColor: lieMeta.dotColor }}
                       >
                         {shot.strokeNumber}
                       </span>
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold text-[#0F1A14] truncate">
-                          {shot.clubName}
-                          <span className="text-slate-400 font-normal mx-1">·</span>
-                          <span className="font-medium text-slate-700">
+                        <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate flex items-center gap-1.5">
+                          <span>{shot.clubName}</span>
+                          <span className="text-slate-400 font-normal">·</span>
+                          <span
+                            className="font-semibold text-xs px-1.5 py-0.2 rounded"
+                            style={{
+                              backgroundColor: `${lieMeta.dotColor}18`,
+                              color: lieMeta.dotColor,
+                            }}
+                          >
                             {isActiveOpenNfc ? 'In Progress' : lieMeta.label}
                           </span>
                           {isPutt && (
-                            <span className="ml-1.5 text-[11px] font-semibold text-emerald-700">
-                              · Putt
+                            <span className="text-[10px] font-bold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 px-1 rounded">
+                              Putt
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
                           {displayDistance}
                           {' · '}
                           {shot.direction === 'straight'
@@ -698,14 +844,26 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                         </div>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteShot(shot.id)}
-                      className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
-                      aria-label={`Delete shot ${shot.strokeNumber}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setEditingShot(shot)}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                        aria-label={`Edit shot ${shot.strokeNumber}`}
+                        title="Edit shot"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteShot(shot.id)}
+                        className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                        aria-label={`Delete shot ${shot.strokeNumber}`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -713,15 +871,31 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           )}
         </div>
 
-        {/* Android / Mobile Standalone Install Row (auto-hides once installed) */}
+        {/* PWA Install Banner if applicable */}
         {!isInstalled && (
-          <div className="pt-2 flex items-center justify-between gap-3">
-            <span className="text-[11px] text-slate-500">
-              Install to Android Home Screen for hardware NFC tag scanning
+          <div className="pt-2 flex items-center justify-between gap-3 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 rounded-xl border border-emerald-100 dark:border-emerald-900/40">
+            <span className="text-[11px] text-emerald-900 dark:text-emerald-300 font-medium">
+              Install to Home Screen for hardware NFC club scanning
             </span>
             <PWAInstallButton variant="compact" />
           </div>
         )}
+
+        {/* Edit Shot Modal */}
+        <EditShotModal
+          shot={editingShot}
+          isOpen={Boolean(editingShot)}
+          onClose={() => setEditingShot(null)}
+          onSave={(shotId, updates) => {
+            onUpdateShot?.(shotId, updates);
+            setEditingShot(null);
+          }}
+          onDelete={(shotId) => {
+            onDeleteShot(shotId);
+            setEditingShot(null);
+          }}
+          bag={availableClubs}
+        />
       </div>
     </div>
   );

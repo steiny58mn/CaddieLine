@@ -85,25 +85,25 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-24 lg:pb-8">
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6 pb-28 lg:pb-12 text-slate-900 dark:text-slate-100">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <div className="text-xs font-medium text-slate-500">
             Web NFC Hardware Integration ·{' '}
             {bag.length === 0 ? 'No clubs paired yet' : `${bag.length} clubs configured`}
           </div>
-          <h2 className="font-display text-2xl sm:text-3xl font-bold text-[#0F1A14] mt-0.5">
+          <h2 className="font-display text-2xl sm:text-3xl font-black text-[#0F1A14] dark:text-slate-100 tracking-tight mt-0.5">
             GolfBag & GolfPad NFC Sensors
           </h2>
         </div>
 
         {/* Units Toggle */}
-        <div className="inline-flex items-center p-1 bg-slate-200/80 rounded-xl self-start sm:self-auto">
+        <div className="inline-flex items-center p-1 bg-slate-200/80 dark:bg-slate-800 rounded-2xl self-start sm:self-auto border border-slate-300/60 dark:border-slate-700/60">
           <button
             type="button"
             onClick={() => onChangeUnit('yards')}
             className={`min-h-[38px] px-3.5 rounded-lg text-xs font-semibold transition-colors ${
-              unit === 'yards' ? 'bg-white text-[#0F1A14] shadow-xs' : 'text-slate-600'
+              unit === 'yards' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm font-bold' : 'text-slate-600 dark:text-slate-400 font-semibold'
             }`}
           >
             Yards
@@ -112,7 +112,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
             type="button"
             onClick={() => onChangeUnit('meters')}
             className={`min-h-[38px] px-3.5 rounded-lg text-xs font-semibold transition-colors ${
-              unit === 'meters' ? 'bg-white text-[#0F1A14] shadow-xs' : 'text-slate-600'
+              unit === 'meters' ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm font-bold' : 'text-slate-600 dark:text-slate-400 font-semibold'
             }`}
           >
             Meters
@@ -121,7 +121,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
       </div>
 
       {/* GolfPad Web NFC Scanner Status Card */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 p-5 sm:p-6 space-y-4 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
             <div
@@ -134,10 +134,10 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
               <Nfc className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#0F1A14]">
+              <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">
                 GolfPad / NTAG Grip Tag Pairing (Web NFC)
               </h3>
-              <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-2xl">
                 {nfcSupported
                   ? 'Tap any club button below (D, 3W, 5W, 7W, etc.) to start NFC scanning immediately, then hold your phone against the club grip tag to pair it.'
                   : 'Tap any club button below to pair it. Hardware Web NFC scanning runs in Chrome on Android over HTTPS; on desktop or iOS you can simulate tag scans or enter tag IDs.'}
@@ -222,10 +222,10 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
       </div>
 
       {/* Paired Clubs List */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-bold text-[#0F1A14]">Paired Clubs in Your Bag</h3>
+            <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Paired Clubs in Your Bag</h3>
             <p className="text-xs text-slate-500 mt-0.5">
               Clubs appear here as you pair them below. Adjust carry yardages or re-scan tags anytime.
             </p>
@@ -334,9 +334,9 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
         )}
 
         {/* Quick Club Buttons at the Bottom — Tap Any Club to Start Scanning Immediately */}
-        <div className="px-5 py-5 bg-[#FAFBFA] border-t border-slate-200 space-y-3">
+        <div className="px-5 py-5 bg-slate-50/70 dark:bg-slate-900/60 border-t border-slate-200/80 dark:border-slate-800/80 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-            <h4 className="text-xs font-bold text-[#0F1A14]">
+            <h4 className="text-xs font-black text-[#0F1A14] dark:text-slate-100">
               Tap a Club to Scan & Pair NFC Tag
             </h4>
             <span className="text-[11px] text-slate-500">
@@ -394,7 +394,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
         {/* Add & Scan Custom Club Row */}
         <form
           onSubmit={handleCreateClub}
-          className="px-5 py-4 bg-slate-50 border-t border-slate-200 flex items-center gap-2.5"
+          className="px-5 py-4 bg-slate-50/90 dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 flex items-center gap-2.5"
         >
           <input
             type="text"
@@ -402,11 +402,11 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
             onChange={(e) => setNewClubName(e.target.value)}
             placeholder="Club name (e.g. 54° Wedge)"
             aria-label="Club name"
-            className="h-10 px-3 rounded-xl border border-slate-300 bg-white text-xs text-[#0F1A14] flex-1 min-w-[150px]"
+            className="h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-semibold text-[#0F1A14] dark:text-slate-100 flex-1 min-w-[150px]"
           />
           <button
             type="submit"
-            className="h-10 px-4 rounded-xl bg-[#0F1A14] text-white text-xs font-semibold hover:bg-slate-800 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="h-10 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add & Scan</span>

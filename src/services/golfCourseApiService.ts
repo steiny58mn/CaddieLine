@@ -1,3 +1,33 @@
+
+declare const __BUILD_GOLF_API_KEY__: string | undefined;
+
+export function getClientFallbackApiKey(): string {
+  try {
+    if (typeof __BUILD_GOLF_API_KEY__ === 'string' && __BUILD_GOLF_API_KEY__) {
+      return __BUILD_GOLF_API_KEY__;
+    }
+  } catch {}
+  try {
+    const vKey = (
+      (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOLF_API_KEY ||
+      (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_GOLFCOURSE_API_KEY ||
+      ''
+    ).trim();
+    if (vKey) return vKey;
+  } catch {}
+  return '';
+}
+
+export function getGolfApiHeaders(): Record<string, string> {
+  const clientKey = getClientFallbackApiKey();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (clientKey) {
+    headers['x-golf-api-key'] = clientKey;
+  }
+  return headers;
+}
 import {
   CourseInfo,
   GolfCourseDetail,
@@ -98,11 +128,10 @@ export async function fetchGolfCourseMatch(course: CourseInfo): Promise<GolfCour
   }
 
   try {
+    const headers = getGolfApiHeaders();
     const res = await fetch('/api/golfcourse/match', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         name: course.clubName || course.name,
         subCourseName: course.subCourseName || course.courseName || '',
@@ -501,10 +530,26 @@ export interface GolfApiStatus {
 }
 
 export async function checkGolfApiStatus(): Promise<GolfApiStatus> {
+  const clientKey = getClientFallbackApiKey();
   try {
-    const res = await fetch('/api/golfcourse/status');
+    const headers = getGolfApiHeaders();
+    const res = await fetch('/api/golfcourse/status', { headers });
     if (res.ok) {
       const data = (await res.json()) as GolfApiStatus;
+      if (!data.apiKeyStatus?.configured && clientKey) {
+        data.configured = true;
+        data.golfCourseApi = true;
+        const len = clientKey.length;
+        const masked = len >= 8 ? `${clientKey.slice(0, 4)}••••${clientKey.slice(-4)} (${len} chars)` : `${clientKey.slice(0, 2)}••••`;
+        data.apiKeyStatus = {
+          configured: true,
+          source: 'Client Build Environment (Vite)',
+          masked,
+          preview: clientKey.slice(0, 4) + '...',
+          length: len,
+          envVarsChecked: data.apiKeyStatus?.envVarsChecked ?? [],
+        };
+      }
       console.log('[CaddieLine Deployment Check] /api/golfcourse/status:', data);
       return data;
     }

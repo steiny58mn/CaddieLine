@@ -516,9 +516,36 @@ export function isShotPutt(shot: {
   lie: ShotLie;
   isPutt?: boolean;
 }): boolean {
-  if (shot.isPutt !== undefined) return shot.isPutt;
-  const isPutterClub = shot.clubId === 'pt' || shot.clubName.toLowerCase().includes('putter');
-  return isPutterClub && (shot.lie === 'green' || shot.lie === 'holed');
+  // If lie is NOT green and NOT holed, it cannot be a putt
+  if (shot.lie !== 'green' && shot.lie !== 'holed') {
+    return false;
+  }
+  // If lie is green or holed, it is counted as a putt unless explicitly disabled
+  if (shot.isPutt !== undefined) {
+    return shot.isPutt;
+  }
+  return true;
+}
+
+export interface DistanceFeetInches {
+  totalFeet: number;
+  totalInches: number;
+  feet: number;
+  inches: number;
+  formatted: string;
+}
+
+export function formatFeetAndInches(meters: number): DistanceFeetInches {
+  const totalInches = Math.max(0, Math.round(meters * 39.3700787));
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return {
+    totalFeet: Math.round(totalInches / 12),
+    totalInches,
+    feet,
+    inches,
+    formatted: `${feet} ft ${inches} in`,
+  };
 }
 
 export function getLoggedPuttCount(score: HoleScoreState): number {

@@ -133,7 +133,7 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function getApiKeyInfo(env: CloudflareEnv): {
+function getApiKeyInfo(env: CloudflareEnv, request?: Request): {
   key: string;
   envVarName: string | null;
   keyLength: number;
@@ -179,6 +179,38 @@ function getApiKeyInfo(env: CloudflareEnv): {
       }
     }
   }
+
+  if (request) {
+    const headerKey = request.headers.get('x-golf-api-key')?.trim();
+    if (headerKey && headerKey.length > 0) {
+      const cleaned = headerKey
+        .replace(/^[\"\']+|[\"\']+$/g, '')
+        .replace(/^(Key|Bearer)\s+/i, '')
+        .trim();
+      if (cleaned.length > 0) {
+        const len = cleaned.length;
+        const preview =
+          len >= 8
+            ? `${cleaned.slice(0, 4)}••••${cleaned.slice(-4)}`
+            : `${cleaned.slice(0, 2)}••••`;
+        return {
+          key: cleaned,
+          envVarName: 'x-golf-api-key (Client Build Header)',
+          keyLength: len,
+          maskedKey: preview,
+          apiKeyStatus: {
+            configured: true,
+            source: 'Vite Build Header (x-golf-api-key)',
+            masked: preview,
+            preview,
+            length: len,
+            envVarsChecked: GOLF_API_ENV_VARS,
+          },
+        };
+      }
+    }
+  }
+
   return {
     key: '',
     envVarName: null,
@@ -480,13 +512,14 @@ async function fetchOpenGolfDetail(id: string): Promise<ServerGolfCourseDetail |
 
 async function searchGolfCourseApiWithDebug(
   query: string,
-  env: CloudflareEnv
+  env: CloudflareEnv,
+  request?: Request
 ): Promise<{
   courses: ServerGolfCourseDetail[];
   upstreamStatus: number | null;
   upstreamError: string | null;
 }> {
-  const { key: apiKey } = getApiKeyInfo(env);
+  const { key: apiKey } = getApiKeyInfo(env, request);
   const trimmed = query.trim();
   if (!apiKey || !trimmed) {
     return {
@@ -558,9 +591,10 @@ async function searchGolfCourseApiWithDebug(
 
 async function fetchGolfCourseApiDetail(
   id: string,
-  env: CloudflareEnv
+  env: CloudflareEnv,
+  request?: Request
 ): Promise<ServerGolfCourseDetail | null> {
-  const { key: apiKey } = getApiKeyInfo(env);
+  const { key: apiKey } = getApiKeyInfo(env, request);
   if (!apiKey || !id) return null;
 
   try {
@@ -814,7 +848,7 @@ export default {
 
     // 1. GET /api/golfcourse/status
     if (pathname === '/api/golfcourse/status' && request.method === 'GET') {
-      const info = getApiKeyInfo(env);
+      const info = getApiKeyInfo(env, request);
       const verify = searchParams.get('verify') === '1';
       let upstreamStatus: number | null = null;
       let upstreamError: string | null = null;
@@ -850,11 +884,11 @@ export default {
       if (!q) {
         return jsonResponse({ configured: true, courses: [] });
       }
-      const info = getApiKeyInfo(env);
+      const info = getApiKeyInfo(env, request);
       const [ogaCourses, gcaRes] = await Promise.all([
         searchOpenGolfApi(q),
         info.key
-          ? searchGolfCourseApiWithDebug(q, env)
+          ? searchGolfCourseApiWithDebug(q, env, request)
           : Promise.resolve({ courses: [], upstreamStatus: null, upstreamError: null }),
       ]);
       return jsonResponse({
@@ -878,7 +912,7 @@ export default {
         return jsonResponse({ course });
       }
       const course =
-        (await fetchGolfCourseApiDetail(id, env)) ?? (await fetchOpenGolfDetail(id));
+        (await fetchGolfCourseApiDetail(id, env, request)) ?? (await fetchOpenGolfDetail(id));
       if (!course) return jsonResponse({ error: 'Course not found' }, 404);
       return jsonResponse({ course });
     }
@@ -900,7 +934,7 @@ export default {
           if (direct) matchedList.push(direct);
         } else {
           const direct =
-            (await fetchGolfCourseApiDetail(golfCourseApiId, env)) ??
+            (await fetchGolfCourseApiDetail(golfCourseApiId, env, request)) ??
             (await fetchOpenGolfDetail(golfCourseApiId));
           if (direct) matchedList.push(direct);
         }
@@ -912,7 +946,7 @@ export default {
         .trim();
       const queryTerm = baseName.length >= 3 ? baseName : name.split('—')[0].trim();
 
-      const info = getApiKeyInfo(env);
+      const info = getApiKeyInfo(env, request);
       let upstreamStatus: number | null = null;
       let upstreamError: string | null = null;
 
@@ -943,7 +977,7 @@ export default {
         matchedList.push(...ogaHydrated);
 
         if (info.key) {
-          const gcaRes = await searchGolfCourseApiWithDebug(queryTerm, env);
+          const gcaRes = await searchGolfCourseApiWithDebug(queryTerm, env, request);
           upstreamStatus = gcaRes.upstreamStatus;
           upstreamError = gcaRes.upstreamError;
           const relevant = gcaRes.courses.filter((c) => {
@@ -963,7 +997,7 @@ export default {
           const hydrated = await Promise.all(
             relevant.slice(0, 4).map(async (c) => {
               if (c.tees.some((t) => t.holes.length > 0)) return c;
-              return (await fetchGolfCourseApiDetail(c.id, env)) ?? c;
+              return (await fetchGolfCourseApiDetail(c.id, env, request)) ?? c;
             })
           );
           matchedList.push(...hydrated);

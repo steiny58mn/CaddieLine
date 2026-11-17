@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Compass, Loader2, MapPin, Search, Trash2 } from 'lucide-react';
+import { ChevronRight, Compass, Loader2, MapPin, Navigation, Search, Sparkles, Trash2, Zap } from 'lucide-react';
 import {
   CourseInfo,
   GolfCourseDetail,
@@ -434,60 +434,84 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   }, [query, sortedResults]);
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-6 pb-24">
-        <div className="space-y-2">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold text-[#0F1A14] tracking-tight text-balance">
-            Choose your golf course
-          </h1>
-          <p className="text-sm sm:text-base text-slate-600">
-            Select a course to start your round, enable automatic NFC club tracking, and load hole GPS layouts.
-          </p>
+    <div className="h-full overflow-y-auto bg-[#F4F7F4] dark:bg-[#07100a]">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6 pb-28">
+        {/* Modern Vibrant Hero Banner */}
+        <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-800 to-teal-900 text-white p-6 sm:p-8 shadow-xl shadow-emerald-950/20">
+          <div className="absolute top-0 right-0 -mt-6 -mr-6 w-48 h-48 rounded-full bg-emerald-500/20 blur-2xl pointer-events-none" />
+          <div className="absolute bottom-0 left-1/3 -mb-8 w-40 h-40 rounded-full bg-teal-400/15 blur-xl pointer-events-none" />
+
+          <div className="relative z-10 space-y-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-emerald-200 text-xs font-bold uppercase tracking-wider">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Smart GPS & NFC Golf Caddie</span>
+            </div>
+
+            <h1 className="font-display text-2xl sm:text-4xl font-black tracking-tight text-white leading-tight">
+              Ready to Tee Off?
+            </h1>
+
+            <p className="text-sm sm:text-base text-emerald-100/90 max-w-xl">
+              Choose your course to launch live GPS distances, automatic NFC club tracking, and interactive OpenStreetMap hole geometry.
+            </p>
+
+            {/* Quick Feature Badges */}
+            <div className="pt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-emerald-100">
+              <span className="px-3 py-1 rounded-xl bg-white/10 backdrop-blur-xs flex items-center gap-1.5 border border-white/10">
+                <Navigation className="w-3.5 h-3.5 text-emerald-300" />
+                Live GPS Auto-Detection
+              </span>
+              <span className="px-3 py-1 rounded-xl bg-white/10 backdrop-blur-xs flex items-center gap-1.5 border border-white/10">
+                <Zap className="w-3.5 h-3.5 text-amber-300" />
+                GolfPad NFC Tag Scanning
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* Course Search Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <form onSubmit={handleTextSearch} className="p-4 sm:p-5 border-b border-slate-100 space-y-3">
+        {/* Course Search & Finder Card */}
+        <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 shadow-md shadow-slate-200/40 dark:shadow-none overflow-hidden">
+          <form onSubmit={handleTextSearch} className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800/80 space-y-3.5">
             <div className="flex gap-2">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search course name, city, or club..."
-                  className="w-full h-11 pl-10 pr-4 rounded-xl border border-slate-300 text-sm text-[#0F1A14] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-transparent"
+                  placeholder="Search course name, club, or city..."
+                  className="w-full h-12 pl-10 pr-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/60 text-sm font-semibold text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
                 />
               </div>
               <button
                 type="submit"
                 disabled={isSearching || !query.trim()}
-                className="h-11 px-5 rounded-xl bg-emerald-700 text-white text-sm font-semibold hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap shrink-0"
+                className="h-12 px-6 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-sm font-bold shadow-md shadow-emerald-600/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap shrink-0 active:scale-95"
               >
                 {isSearching ? 'Searching...' : 'Search'}
               </button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100">
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => void handleNearbySearch()}
                 disabled={isSearching}
-                className="inline-flex items-center gap-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800 min-h-[36px] px-2 -ml-2 rounded-lg hover:bg-emerald-50 disabled:opacity-50 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 min-h-[38px] px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60 hover:bg-emerald-100 disabled:opacity-50 transition-all whitespace-nowrap shadow-2xs"
               >
                 <Compass className="w-4 h-4" />
-                <span>{userPosition ? 'Refresh Nearest Courses' : 'Refresh Nearby Courses'}</span>
+                <span>{userPosition ? 'Refresh Nearest 10 Courses' : 'Refresh Nearby Courses'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setShowKeyDetails((v) => !v)}
-                className="inline-flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-900 font-medium px-2.5 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white font-medium px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 title="View deployment API key diagnostics"
               >
                 <span
                   className={`w-2 h-2 rounded-full ${
-                    apiStatus?.apiKeyStatus?.configured ? 'bg-emerald-500' : 'bg-amber-500'
+                    apiStatus?.apiKeyStatus?.configured ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                   }`}
                 />
                 <span className="font-mono text-[11px]">
@@ -499,10 +523,10 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             </div>
 
             {showKeyDetails && (
-              <div className="p-3 rounded-xl bg-slate-900 text-slate-200 text-xs font-mono space-y-1.5 mt-2">
-                <div className="flex items-center justify-between font-sans text-slate-300 font-semibold text-[11px] pb-1 border-b border-slate-800">
+              <div className="p-3.5 rounded-2xl bg-slate-900 text-slate-200 text-xs font-mono space-y-1.5 mt-2 border border-slate-800 shadow-xl">
+                <div className="flex items-center justify-between font-sans text-slate-300 font-bold text-[11px] pb-1 border-b border-slate-800">
                   <span>DEPLOYMENT API KEY DIAGNOSTICS</span>
-                  <span className="text-[10px] text-emerald-400">OpenGolfAPI: ACTIVE</span>
+                  <span className="text-[10px] text-emerald-400 font-semibold">OpenGolfAPI: ACTIVE</span>
                 </div>
                 <div>Status: {apiStatus?.apiKeyStatus?.configured ? 'CONFIGURED ✓' : 'NOT DETECTED ⚠️'}</div>
                 <div>Source Env Var: {apiStatus?.apiKeyStatus?.source ?? 'None matched'}</div>
@@ -513,21 +537,22 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                 </div>
                 {!apiStatus?.apiKeyStatus?.configured && (
                   <div className="text-[11px] text-amber-300 pt-1 font-sans">
-                    Tip: Set <code>GOLF_API_KEY</code> or <code>GOLFCOURSE_API_KEY</code> in your deployment environment variables. OpenGolfAPI keyless fallback remains active.
+                    Tip: Set <code>GOLF_API_KEY</code> or <code>GOLFCOURSE_API_KEY</code> in Cloudflare Pages build variables. OpenGolfAPI keyless fallback remains active.
                   </div>
                 )}
               </div>
             )}
           </form>
 
-          <div className="divide-y divide-slate-100 max-h-[460px] overflow-y-auto">
+          {/* Results List */}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/80 max-h-[500px] overflow-y-auto">
             {errorMessage && (
-              <div className="p-4 m-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
+              <div className="p-4 m-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3 shadow-2xs">
                 <span>{errorMessage}</span>
                 <button
                   type="button"
                   onClick={() => void handleNearbySearch()}
-                  className="px-3 py-1.5 rounded-lg bg-amber-900 text-white font-semibold whitespace-nowrap shrink-0 hover:bg-amber-950 transition-colors"
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-800 text-white font-bold whitespace-nowrap shrink-0 hover:bg-amber-900 transition-colors"
                 >
                   Retry
                 </button>
@@ -535,24 +560,29 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
             )}
 
             {isSearching && (
-              <div className="p-10 flex items-center justify-center gap-2.5 text-sm text-slate-500">
-                <Loader2 className="w-4 h-4 animate-spin text-emerald-700" />
-                <span>{query.trim() ? 'Searching golf courses...' : 'Finding nearest golf courses...'}</span>
+              <div className="p-12 flex flex-col items-center justify-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span className="font-medium">
+                  {query.trim() ? 'Searching golf courses...' : 'Detecting your GPS position & nearest courses...'}
+                </span>
               </div>
             )}
 
             {!isSearching && hasSearched && displayedCourses.length === 0 && !errorMessage && (
-              <div className="p-8 text-center text-sm text-slate-500">
-                {query.trim()
-                  ? 'No golf courses matched your search. Try adding a city or state name.'
-                  : 'No golf courses found nearby. Try searching by course name or city above.'}
+              <div className="p-12 text-center text-sm text-slate-500 dark:text-slate-400 space-y-1">
+                <div className="font-bold text-slate-800 dark:text-slate-200">No courses found</div>
+                <div className="text-xs">
+                  {query.trim()
+                    ? 'No golf courses matched your query. Try adding a city, state, or club name.'
+                    : 'No golf courses found nearby. Try searching by course name above.'}
+                </div>
               </div>
             )}
 
             {!isSearching && displayedCourses.length > 0 && (
-              <div className="px-5 py-2.5 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
-                <span>{query.trim() ? `Search Results for "${query.trim()}"` : 'Nearest Golf Courses'}</span>
-                <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+              <div className="px-5 py-2.5 bg-slate-50/80 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                <span>{query.trim() ? `Results for "${query.trim()}"` : 'Nearest Golf Courses'}</span>
+                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200/60 dark:border-emerald-800/60 px-2.5 py-0.5 rounded-full shadow-2xs">
                   {query.trim()
                     ? `${displayedCourses.length} ${displayedCourses.length === 1 ? 'course' : 'courses'}`
                     : `Top ${displayedCourses.length}`}
@@ -565,46 +595,75 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
               const isMultiExpanded = pendingMultiCourse?.course.placeId === course.placeId;
               const loopOptions = isMultiExpanded ? pendingMultiCourse.loops : [];
 
+              // Compute distance badge if GPS position is available
+              const distM = userPosition ? computeDistanceMeters(userPosition, course.location) : null;
+              const distBadge =
+                distM !== null
+                  ? distM >= 1609.34
+                    ? `${(distM / 1609.34).toFixed(1)} mi`
+                    : `${Math.round(distM * 1.09361)} yds`
+                  : null;
+
               return (
-                <div key={course.placeId} className="bg-white">
+                <div key={course.placeId} className="bg-white dark:bg-[#0c160f] transition-colors">
                   <button
                     type="button"
                     disabled={loadingCourseId !== null}
                     onClick={() => void handleChooseCourse(course)}
-                    className="w-full text-left px-5 py-3.5 min-h-[64px] flex items-center justify-between gap-3 hover:bg-emerald-50/60 disabled:opacity-60 transition-colors"
+                    className="w-full text-left px-5 py-4 min-h-[72px] flex items-center justify-between gap-3 hover:bg-emerald-50/60 dark:hover:bg-slate-800/40 disabled:opacity-60 transition-colors group"
                   >
-                    <div className="flex items-start gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 mt-0.5">
+                    <div className="flex items-start gap-3.5 min-w-0">
+                      <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-md shadow-emerald-600/20 group-hover:scale-105 transition-transform">
                         {isLoadingThis ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <Loader2 className="w-5 h-5 animate-spin" />
                         ) : (
-                          <MapPin className="w-4 h-4" />
+                          <MapPin className="w-5 h-5" />
                         )}
                       </div>
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-[#0F1A14] truncate">
-                          {course.name}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-bold text-[#0F1A14] dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 transition-colors truncate">
+                            {course.name}
+                          </span>
+                          {distBadge && (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/60">
+                              {distBadge}
+                            </span>
+                          )}
                         </div>
                         {course.formattedAddress && (
-                          <div className="text-xs text-slate-500 truncate mt-0.5">
+                          <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
                             {course.formattedAddress}
                           </div>
                         )}
-                        <div className="text-[11px] text-slate-400 mt-0.5">
+                        <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                           {course.attributions?.length
                             ? course.attributions.join(' · ')
                             : 'OpenStreetMap'}
                         </div>
                       </div>
                     </div>
-                    <span className="text-xs font-semibold text-emerald-700 whitespace-nowrap shrink-0">
-                      {isLoadingThis ? 'Loading...' : isMultiExpanded ? 'Select Loop ↓' : 'Start Round'}
+
+                    <span className="h-9 px-3.5 rounded-xl bg-slate-100 dark:bg-slate-800 group-hover:bg-emerald-700 group-hover:text-white dark:group-hover:bg-emerald-600 text-xs font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap shrink-0 transition-all flex items-center gap-1 shadow-2xs">
+                      {isLoadingThis ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Loading...</span>
+                        </>
+                      ) : isMultiExpanded ? (
+                        <span>Select Loop ↓</span>
+                      ) : (
+                        <>
+                          <span>Play</span>
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </>
+                      )}
                     </span>
                   </button>
 
                   {isMultiExpanded && loopOptions.length >= 2 && (
-                    <div className="px-5 pb-4 pt-2 bg-emerald-50/50 border-t border-emerald-100 space-y-3">
-                      <div className="text-xs font-semibold text-emerald-950">
+                    <div className="px-5 pb-5 pt-3 bg-emerald-50/50 dark:bg-emerald-950/20 border-t border-emerald-100 dark:border-emerald-900/50 space-y-3">
+                      <div className="text-xs font-bold text-emerald-950 dark:text-emerald-200">
                         Multiple courses found at {course.name} — choose which course to play:
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -619,18 +678,18 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                               onClick={() =>
                                 handlePickSubCourse(course, pendingMultiCourse.geometry, loop)
                               }
-                              className="min-h-[48px] px-4 py-2.5 rounded-xl bg-white border border-emerald-200 hover:border-emerald-600 hover:bg-emerald-50 text-left flex items-center justify-between gap-2 transition-colors shadow-2xs"
+                              className="min-h-[52px] px-4 py-3 rounded-2xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 hover:border-emerald-600 dark:hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-slate-800 text-left flex items-center justify-between gap-2 transition-all shadow-2xs"
                             >
                               <div>
-                                <div className="text-xs font-bold text-[#0F1A14]">
+                                <div className="text-xs font-bold text-[#0F1A14] dark:text-slate-100">
                                   {displayName}
                                 </div>
-                                <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                                <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
                                   {loop.holeCount} holes · Par {loop.parTotal}
                                   {loop.yardageTotal ? ` · ${loop.yardageTotal.toLocaleString()} yds` : ''}
                                 </div>
                               </div>
-                              <ChevronRight className="w-4 h-4 text-emerald-700 shrink-0" />
+                              <ChevronRight className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
                             </button>
                           );
                         })}
@@ -642,16 +701,16 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                         const frontLoop = nineLoops.find((s) => s.id === comboFrontId) ?? nineLoops[0];
                         const backLoop = nineLoops.find((s) => s.id === comboBackId) ?? nineLoops[1];
                         return (
-                          <div className="pt-2 border-t border-emerald-200/70 space-y-2">
-                            <div className="text-[11px] font-semibold text-emerald-900">
-                              Or pair two 9-hole loops for 18 holes:
+                          <div className="pt-3 border-t border-emerald-200/70 dark:border-emerald-800/70 space-y-2">
+                            <div className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
+                              Or pair two 9-hole loops for an 18-hole round:
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                               <select
                                 value={frontLoop.id}
                                 onChange={(e) => setComboFrontId(e.target.value)}
                                 aria-label="Front 9 loop"
-                                className="h-10 px-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold text-[#0F1A14]"
+                                className="h-10 px-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 text-xs font-bold text-[#0F1A14] dark:text-slate-100"
                               >
                                 {nineLoops.map((loop) => (
                                   <option key={loop.id} value={loop.id}>
@@ -663,7 +722,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                                 value={backLoop.id}
                                 onChange={(e) => setComboBackId(e.target.value)}
                                 aria-label="Back 9 loop"
-                                className="h-10 px-2.5 rounded-xl border border-emerald-200 bg-white text-xs font-semibold text-[#0F1A14]"
+                                className="h-10 px-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-slate-900 text-xs font-bold text-[#0F1A14] dark:text-slate-100"
                               >
                                 {nineLoops.map((loop) => (
                                   <option key={loop.id} value={loop.id}>
@@ -681,7 +740,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
                                     backLoop
                                   )
                                 }
-                                className="h-10 px-3.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold whitespace-nowrap transition-colors"
+                                className="h-10 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold whitespace-nowrap shadow-sm transition-all"
                               >
                                 Play 18 Holes →
                               </button>
@@ -699,45 +758,66 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
 
         {/* Saved Rounds Section (Local Storage) */}
         {savedRounds.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-              <h2 className="text-sm font-bold text-[#0F1A14]">Saved Rounds</h2>
-              <span className="text-xs text-slate-500">Stored locally on this device</span>
+          <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 shadow-md shadow-slate-200/40 dark:shadow-none overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Saved Rounds</h2>
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-mono font-bold text-slate-500">
+                  {savedRounds.length}
+                </span>
+              </div>
+              <span className="text-xs text-slate-400">Stored on device</span>
             </div>
-            <div className="divide-y divide-slate-100">
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/80">
               {savedRounds.map((item) => {
                 const holeNums = Object.keys(item.scores).map(Number);
                 const played = holeNums.filter((n) => isHolePlayed(item.scores[n]));
                 const strokes = holeNums.reduce((s, n) => s + getHoleStrokes(item.scores[n]), 0);
                 const parPlayed = played.reduce((s, n) => s + (item.holes[n]?.par ?? 4), 0);
+                const diff = strokes - parPlayed;
                 return (
                   <div
                     key={item.id}
-                    className="px-5 py-3.5 flex items-center justify-between gap-4"
+                    className="px-5 py-4 flex items-center justify-between gap-4 hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-semibold text-[#0F1A14] truncate">
+                      <div className="text-sm font-bold text-[#0F1A14] dark:text-slate-100 truncate">
                         {item.course?.name ?? 'Saved Round'}
                       </div>
-                      <div className="text-xs text-slate-500 font-mono tabular-nums mt-0.5">
-                        {new Date(item.startedAt).toLocaleDateString()} · {played.length} holes ·{' '}
-                        {strokes > 0
-                          ? `${strokes} (${formatRelativeToPar(strokes - parPlayed)})`
-                          : 'No score'}
+                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums mt-1">
+                        <span>{new Date(item.startedAt).toLocaleDateString()}</span>
+                        <span>·</span>
+                        <span>{played.length} holes</span>
+                        {strokes > 0 && (
+                          <>
+                            <span>·</span>
+                            <span
+                              className={`px-2 py-0.2 rounded-md font-bold text-[11px] ${
+                                diff < 0
+                                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                                  : diff === 0
+                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    : 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+                              }`}
+                            >
+                              {strokes} ({formatRelativeToPar(diff)})
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
                         onClick={() => onLoadSavedRound(item)}
-                        className="min-h-[40px] px-3.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                        className="h-10 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-emerald-600 hover:text-white dark:hover:bg-emerald-500 dark:hover:text-slate-950 text-xs font-bold text-slate-700 dark:text-slate-300 transition-all whitespace-nowrap shadow-2xs"
                       >
-                        Open
+                        Resume
                       </button>
                       <button
                         type="button"
                         onClick={() => onDeleteSavedRound(item.id)}
-                        className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
                         aria-label="Delete saved round"
                       >
                         <Trash2 className="w-4 h-4" />

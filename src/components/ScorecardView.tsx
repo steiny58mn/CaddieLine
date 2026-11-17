@@ -27,40 +27,40 @@ interface ScorecardViewProps {
 
 const ScoreSymbol: React.FC<{ strokes: number; par: number }> = ({ strokes, par }) => {
   if (strokes <= 0) {
-    return <span className="text-slate-300 font-mono">—</span>;
+    return <span className="text-slate-300 dark:text-slate-600 font-mono">—</span>;
   }
   const diff = strokes - par;
 
   if (diff <= -2) {
     return (
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full border-2 border-amber-500 ring-2 ring-amber-300/60 bg-amber-50 text-amber-950 font-mono font-bold text-xs tabular-nums">
+      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full border-2 border-amber-500 ring-2 ring-amber-300/80 bg-amber-100 dark:bg-amber-950/80 text-amber-950 dark:text-amber-200 font-mono font-black text-xs tabular-nums shadow-xs">
         {strokes}
       </span>
     );
   }
   if (diff === -1) {
     return (
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full border-2 border-emerald-600 bg-emerald-50 text-emerald-950 font-mono font-bold text-xs tabular-nums">
+      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full border-2 border-rose-500 bg-rose-50 dark:bg-rose-950/80 text-rose-950 dark:text-rose-200 font-mono font-black text-xs tabular-nums shadow-xs">
         {strokes}
       </span>
     );
   }
   if (diff === 0) {
     return (
-      <span className="inline-flex items-center justify-center w-7 h-7 font-mono font-bold text-xs text-[#0F1A14] tabular-nums">
+      <span className="inline-flex items-center justify-center w-7 h-7 font-mono font-bold text-xs text-slate-900 dark:text-slate-100 tabular-nums">
         {strokes}
       </span>
     );
   }
   if (diff === 1) {
     return (
-      <span className="inline-flex items-center justify-center w-7 h-7 rounded-sm border border-sky-600 bg-sky-50 text-sky-950 font-mono font-bold text-xs tabular-nums">
+      <span className="inline-flex items-center justify-center w-7 h-7 rounded-md border-2 border-sky-600 bg-sky-50 dark:bg-sky-950/80 text-sky-950 dark:text-sky-200 font-mono font-black text-xs tabular-nums shadow-xs">
         {strokes}
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center justify-center w-7 h-7 rounded-sm border-2 border-rose-600 bg-rose-50 text-rose-950 font-mono font-bold text-xs tabular-nums">
+    <span className="inline-flex items-center justify-center w-7 h-7 rounded-md border-2 border-purple-700 bg-purple-50 dark:bg-purple-950/80 text-purple-950 dark:text-purple-200 font-mono font-black text-xs tabular-nums shadow-xs">
       {strokes}
     </span>
   );
@@ -93,9 +93,9 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
   const sumPutts = holeNumbers.reduce((acc, n) => acc + getEffectivePutts(scores[n]), 0);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
-      <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-[#FAFBFA]">
-        <h3 className="text-sm font-bold text-[#0F1A14]">{title}</h3>
+    <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/60">
+        <h3 className="text-sm font-bold text-[#0F1A14] dark:text-slate-100">{title}</h3>
         <span className="text-xs font-mono text-slate-500 tabular-nums">
           Par {sumPar} · {formatDistanceValue(sumYards, unit)} {unitSuffix(unit)}
         </span>
@@ -104,7 +104,7 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
       <div className="overflow-x-auto">
         <table className="w-full text-center border-collapse min-w-[640px]">
           <thead>
-            <tr className="border-b border-slate-200 text-xs text-slate-500 bg-slate-50/70">
+            <tr className="border-b border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 bg-slate-50/70 dark:bg-slate-900/40">
               <th className="py-2.5 px-3 text-left font-semibold w-24">Hole</th>
               {holeNumbers.map((num) => (
                 <th key={num} className="py-2 px-1">
@@ -121,12 +121,12 @@ const NineHoleTable: React.FC<NineHoleTableProps> = ({
                   </button>
                 </th>
               ))}
-              <th className="py-2.5 px-3 font-bold text-[#0F1A14] bg-slate-100/80">
+              <th className="py-2.5 px-3 font-bold text-[#0F1A14] dark:text-slate-100 bg-slate-100/80 dark:bg-slate-800/60">
                 {holeNumbers[0] === 1 ? 'OUT' : 'IN'}
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100 text-xs">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs text-slate-800 dark:text-slate-200">
             <tr>
               <td className="py-2 px-3 text-left font-medium text-slate-600">
                 {unit === 'meters' ? 'Meters' : 'Yards'}
@@ -339,54 +339,54 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
 
       {/* 4-column KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Total Score</div>
+        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-slate-900 dark:to-emerald-950/30 rounded-3xl border border-emerald-200/80 dark:border-emerald-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Score</div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-display text-3xl font-bold text-[#0F1A14] tabular-nums">
+            <span className="font-display text-3xl font-black text-[#0F1A14] dark:text-white tabular-nums">
               {totalStrokes > 0 ? totalStrokes : '—'}
             </span>
-            <span className="font-mono text-sm font-bold text-emerald-700 tabular-nums">
+            <span className="font-mono text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
               {playedHoles.length > 0 ? formatRelativeToPar(relativeToPar) : 'E'}
             </span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 tabular-nums font-medium">
             Thru {playedHoles.length} of 18 holes
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Fairways Hit (FIR)</div>
-          <div className="mt-1 font-display text-3xl font-bold text-[#0F1A14] tabular-nums">
+        <div className="bg-gradient-to-br from-white to-sky-50/50 dark:from-slate-900 dark:to-sky-950/30 rounded-3xl border border-sky-200/80 dark:border-sky-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Fairways Hit (FIR)</div>
+          <div className="mt-1 font-display text-3xl font-black text-sky-700 dark:text-sky-300 tabular-nums">
             {firEligible.length > 0
               ? `${Math.round((firHits.length / firEligible.length) * 100)}%`
               : '—'}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
-            {firHits.length} of {firEligible.length} par 4/5 tee shots
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 tabular-nums font-medium">
+            {firHits.length} of {firEligible.length} tee shots
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Greens in Reg (GIR)</div>
-          <div className="mt-1 font-display text-3xl font-bold text-[#0F1A14] tabular-nums">
+        <div className="bg-gradient-to-br from-white to-teal-50/50 dark:from-slate-900 dark:to-teal-950/30 rounded-3xl border border-teal-200/80 dark:border-teal-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Greens in Reg (GIR)</div>
+          <div className="mt-1 font-display text-3xl font-black text-teal-700 dark:text-teal-300 tabular-nums">
             {playedHoles.length > 0
               ? `${Math.round((girHits.length / playedHoles.length) * 100)}%`
               : '—'}
           </div>
-          <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
-            {girHits.length} of {playedHoles.length} holes played
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 tabular-nums font-medium">
+            {girHits.length} of {playedHoles.length} holes
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-medium text-slate-500">Putts & Penalties</div>
+        <div className="bg-gradient-to-br from-white to-purple-50/50 dark:from-slate-900 dark:to-purple-950/30 rounded-3xl border border-purple-200/80 dark:border-purple-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Putts & Penalties</div>
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="font-display text-3xl font-bold text-[#0F1A14] tabular-nums">
+            <span className="font-display text-3xl font-black text-purple-700 dark:text-purple-300 tabular-nums">
               {totalPutts}
             </span>
-            <span className="text-xs text-slate-500">putts</span>
+            <span className="text-xs text-slate-500 font-bold">putts</span>
           </div>
-          <div className="text-[11px] text-slate-500 mt-1 tabular-nums">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 tabular-nums font-medium">
             {totalPenalties} penalty {totalPenalties === 1 ? 'stroke' : 'strokes'}
           </div>
         </div>

@@ -163,32 +163,32 @@ export const StatsView: React.FC<StatsViewProps> = ({
 
       {/* Round Putting & Scoring Summary */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-semibold text-slate-500">Avg Putts / Hole</div>
-          <div className="font-mono text-2xl font-bold text-[#0F1A14] tabular-nums mt-1">
+        <div className="bg-gradient-to-br from-white to-teal-50/50 dark:from-slate-900 dark:to-teal-950/30 rounded-3xl border border-teal-200/80 dark:border-teal-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Avg Putts / Hole</div>
+          <div className="font-mono text-2xl sm:text-3xl font-black text-teal-700 dark:text-teal-300 tabular-nums mt-1">
             {avgPuttsPerHole !== null ? avgPuttsPerHole.toFixed(2) : '—'}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums font-medium">
             {playedHoles.length > 0
               ? `Across ${playedHoles.length} ${playedHoles.length === 1 ? 'hole' : 'holes'}`
               : 'No holes played'}
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-semibold text-slate-500">Total Putts</div>
-          <div className="font-mono text-2xl font-bold text-emerald-700 tabular-nums mt-1">
+        <div className="bg-gradient-to-br from-white to-purple-50/50 dark:from-slate-900 dark:to-purple-950/30 rounded-3xl border border-purple-200/80 dark:border-purple-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Putts</div>
+          <div className="font-mono text-2xl sm:text-3xl font-black text-purple-700 dark:text-purple-300 tabular-nums mt-1">
             {totalPutts}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">Tracked separately</div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Tracked separately</div>
         </div>
 
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="text-xs font-semibold text-slate-500">Total Shots</div>
-          <div className="font-mono text-2xl font-bold text-[#0F1A14] tabular-nums mt-1">
+        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-slate-900 dark:to-emerald-950/30 rounded-3xl border border-emerald-200/80 dark:border-emerald-800/80 p-4 shadow-sm">
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Total Strokes</div>
+          <div className="font-mono text-2xl sm:text-3xl font-black text-emerald-700 dark:text-emerald-300 tabular-nums mt-1">
             {totalStrokes > 0 ? totalStrokes : '—'}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 tabular-nums font-medium">
             {totalStrokes > 0
               ? `${formatRelativeToPar(totalStrokes - totalParPlayed)} vs par`
               : 'Includes putts'}
@@ -199,8 +199,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
       {/* Dispersion & Lie Breakdown Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Directional Dispersion */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="text-sm font-bold text-[#0F1A14]">Directional Miss Tendency</h3>
+        <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 p-5 sm:p-6 shadow-sm">
+          <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Directional Miss Tendency</h3>
           <p className="text-xs text-slate-500 mt-0.5">
             Full swings & approach shots excluding putts ({totalNonPutt} shots)
           </p>
@@ -265,8 +265,8 @@ export const StatsView: React.FC<StatsViewProps> = ({
         </div>
 
         {/* Landing Lie Distribution */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 className="text-sm font-bold text-[#0F1A14]">Where Shots Landed</h3>
+        <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 p-5 sm:p-6 shadow-sm">
+          <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Where Shots Landed</h3>
           <p className="text-xs text-slate-500 mt-0.5">
             Distribution across fairways, rough, trees, bunkers, hazards, and greens
           </p>
@@ -310,9 +310,9 @@ export const StatsView: React.FC<StatsViewProps> = ({
       </div>
 
       {/* Club Distance & Accuracy Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-[#0F1A14]">Club Performance Summary</h3>
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+          <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Club Performance Summary</h3>
         </div>
         {clubRows.length === 0 ? (
           <div className="p-8 text-center text-xs text-slate-500">
@@ -365,9 +365,9 @@ export const StatsView: React.FC<StatsViewProps> = ({
       </div>
 
       {/* Saved Rounds History */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-[#0F1A14]">Saved Rounds</h3>
+      <div className="bg-white dark:bg-[#0c160f] rounded-3xl border border-slate-200/90 dark:border-slate-800/90 overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className="text-sm font-black text-[#0F1A14] dark:text-slate-100">Saved Rounds</h3>
           <span className="text-xs text-slate-500">Stored locally on this device</span>
         </div>
         {savedRounds.length === 0 ? (

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ClipboardList, Map as MapIcon, Nfc } from 'lucide-react';
+import { BarChart3, ClipboardList, Map as MapIcon, Moon, Nfc, Ruler, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -48,6 +48,8 @@ import { StatsView } from './components/StatsView';
 import { BagNfcView } from './components/BagNfcView';
 import { CourseLandingView } from './components/CourseLandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { GpsTapeMeasureModal } from './components/GpsTapeMeasureModal';
+import { useWakeLock } from './hooks/useWakeLock';
 
 const STORAGE_KEYS = {
   ROUND: 'caddieline_active_round_v1',
@@ -70,6 +72,33 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppViewTab>('stats');
   const [statsSubTab, setStatsSubTab] = useState<'entry' | 'analytics'>('entry');
   const [roundJustSaved, setRoundJustSaved] = useState(false);
+
+  // Dark Mode Theme State & Persistence
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('caddieline_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+    }
+    return 'light';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('caddieline_theme', theme);
+    } catch {}
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  // Screen Wake Lock & GPS Tape Measure Modal State
+  const wakeLock = useWakeLock();
+  const [isTapeMeasureOpen, setIsTapeMeasureOpen] = useState(false);
 
   const [round, setRound] = useState<RoundState>(() =>
     loadFromStorage(STORAGE_KEYS.ROUND, createInitialRoundState())
@@ -969,6 +998,48 @@ export default function App() {
     }));
   }, []);
 
+  const handleUpdateShot = useCallback((shotId: string, updates: Partial<ShotRecord>) => {
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      if (!holeScore) return prev;
+
+      const prevLoggedPutts = holeScore.shots.filter(isShotPutt).length;
+      const extraLegacyPutts = Math.max(0, holeScore.manualPutts - prevLoggedPutts);
+
+      const updatedShots = holeScore.shots.map((s) => {
+        if (s.id !== shotId) return s;
+        const merged: ShotRecord = { ...s, ...updates };
+
+        // Explicit rule:
+        // If lie is changed to green or holed, mark as putt.
+        // If lie is changed to non-green, subtract it from being a putt.
+        if (updates.lie !== undefined) {
+          merged.isPutt = updates.lie === 'green' || updates.lie === 'holed';
+          if (updates.penaltyStrokes === undefined) {
+            merged.penaltyStrokes = getLieMeta(merged.lie).penalty;
+          }
+        }
+        return merged;
+      });
+
+      const nextPutts = updatedShots.filter(isShotPutt).length + extraLegacyPutts;
+
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: updatedShots,
+            manualPutts: nextPutts,
+          },
+        },
+      };
+    });
+  }, []);
+
   const handleDeleteShot = useCallback((shotId: string) => {
     if (activeNfcPuttShotIdRef.current === shotId) {
       activeNfcPuttShotIdRef.current = null;
@@ -1267,19 +1338,39 @@ export default function App() {
   const pairedClubsCount = bag.filter((c) => Boolean(c.nfcTagId)).length;
 
   return (
-    <div className="h-full flex flex-col bg-[#F5F7F5]">
+    <div className="h-full flex flex-col bg-[#F4F7F4] dark:bg-[#07100a] text-slate-900 dark:text-slate-100">
       {/* Top Bar */}
-      <header className="h-[52px] md:h-14 px-4 sm:px-6 bg-white border-b border-slate-200 flex items-center justify-between gap-6 shrink-0 z-30">
-        <button
-          type="button"
-          onClick={() => handleSelectNavTab('stats')}
-          className="font-display text-lg font-bold tracking-tight text-[#0F1A14] whitespace-nowrap shrink-0 text-left"
-        >
-          CaddieLine
-        </button>
+      <header className="h-14 sm:h-16 px-3 sm:px-6 bg-white/90 dark:bg-[#0c160f]/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between gap-2 sm:gap-4 shrink-0 z-30 transition-colors shadow-2xs">
+        {/* Brand / Logo */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => handleSelectNavTab('stats')}
+            className="flex items-center gap-2 group text-left transition-transform active:scale-95"
+            aria-label="CaddieLine Home"
+          >
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 p-0.5 shadow-md shadow-emerald-500/25 flex items-center justify-center text-white">
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                <path d="M4 3v18h2v-7h11l-1.5-4.5L17 5H6V3H4z" />
+              </svg>
+            </div>
+            <div className="hidden xs:block leading-none">
+              <span className="font-display text-lg sm:text-xl font-black tracking-tight bg-gradient-to-r from-emerald-900 via-emerald-700 to-teal-700 dark:from-emerald-300 dark:via-emerald-400 dark:to-teal-300 bg-clip-text text-transparent">
+                CaddieLine
+              </span>
+              <span className="block text-[9px] font-bold uppercase tracking-wider text-emerald-700/70 dark:text-emerald-400/70 font-mono mt-0.5">
+                GPS · NFC Caddie
+              </span>
+            </div>
+          </button>
+        </div>
 
+        {/* Center Navigation Tabs for Desktop / Tablet */}
         {isCourseChosen && (
-          <nav className="hidden md:flex items-center gap-6" aria-label="Primary navigation">
+          <nav
+            className="hidden md:flex items-center gap-1 p-1 bg-slate-100/80 dark:bg-slate-800/80 backdrop-blur-md rounded-2xl border border-slate-200/60 dark:border-slate-700/60"
+            aria-label="Primary navigation"
+          >
             {navItems.map((item) => {
               const active = activeTab === item.id;
               return (
@@ -1287,31 +1378,111 @@ export default function App() {
                   key={item.id}
                   type="button"
                   onClick={() => handleSelectNavTab(item.id)}
-                  className={`text-sm font-medium whitespace-nowrap shrink-0 py-1 border-b-2 transition-colors ${
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
                     active
-                      ? 'text-[#0F1A14] border-emerald-700 font-semibold'
-                      : 'text-slate-600 border-transparent hover:text-[#0F1A14] hover:border-slate-300'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 scale-[1.02]'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-slate-700/60'
                   }`}
                 >
-                  {item.label}
+                  {item.icon}
+                  <span>{item.label}</span>
                 </button>
               );
             })}
           </nav>
         )}
 
-        <div className="flex items-center gap-3 shrink-0 min-w-0">
+        {/* Right Tools & Status Strip */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0">
+          {/* Live GPS Status Indicator */}
+          {geo.position && (
+            <div
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/70 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums shadow-2xs"
+              title={`GPS Accuracy: ±${geo.accuracyMeters ? Math.round(geo.accuracyMeters * 3.28084) : '?'} ft`}
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>GPS</span>
+              {geo.accuracyMeters && (
+                <span className="text-slate-400 font-semibold">
+                  ±{Math.round(geo.accuracyMeters * 3.28084)}ft
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* GPS Tape Measure tool button */}
+          <button
+            type="button"
+            onClick={() => setIsTapeMeasureOpen(true)}
+            className="h-9 px-2.5 sm:px-3 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-2xs active:scale-95"
+            title="GPS Tape Measure (Measure in Feet & Inches)"
+            aria-label="Open GPS Tape Measure"
+          >
+            <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="hidden sm:inline">Tape Measure</span>
+          </button>
+
+          {/* Screen Wake Lock button */}
+          {wakeLock.isSupported && (
+            <button
+              type="button"
+              onClick={() => {
+                if (wakeLock.isWakeLockActive) {
+                  void wakeLock.releaseWakeLock();
+                } else {
+                  void wakeLock.requestWakeLock();
+                }
+              }}
+              className={`h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-2xs active:scale-95 ${
+                wakeLock.isWakeLockActive
+                  ? 'border-emerald-500 bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+              }`}
+              title={
+                wakeLock.isWakeLockActive
+                  ? 'Screen stays awake for continuous NFC scanning (Tap to allow sleep)'
+                  : 'Keep screen awake to prevent phone sleep during round'
+              }
+              aria-label="Toggle screen wake lock"
+            >
+              {wakeLock.isWakeLockActive ? (
+                <SmartphoneCharging className="w-4 h-4 text-white shrink-0 animate-pulse" />
+              ) : (
+                <Smartphone className="w-4 h-4 text-slate-400 shrink-0" />
+              )}
+              <span className="hidden sm:inline">
+                {wakeLock.isWakeLockActive ? 'Screen ON' : 'Keep Awake'}
+              </span>
+            </button>
+          )}
+
+          {/* Dark Mode Toggle */}
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+            className="h-9 w-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center shrink-0 transition-all shadow-2xs active:scale-95"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label="Toggle dark mode"
+          >
+            {theme === 'dark' ? (
+              <Sun className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+            )}
+          </button>
+
           {isCourseChosen ? (
-            <span className="text-xs font-semibold text-emerald-800 truncate max-w-[180px] sm:max-w-[260px]">
-              {round.course?.name}
-            </span>
+            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 truncate max-w-[200px]">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              <span className="truncate">{round.course?.name}</span>
+            </div>
           ) : (
             <button
               type="button"
               onClick={() => setActiveTab((prev) => (prev === 'bag' ? 'stats' : 'bag'))}
-              className="h-9 px-3.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-[#0F1A14] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+              className="h-9 px-3 sm:px-3.5 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 text-[#0F1A14] dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors shadow-2xs"
             >
-              <Nfc className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+              <Nfc className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <span>{activeTab === 'bag' ? 'Choose Course' : 'Bag & NFC'}</span>
             </button>
           )}
@@ -1394,6 +1565,8 @@ export default function App() {
                 onSelectDirection={setSelectedDirection}
                 onLogShot={handleLogShotManual}
                 onAddPutt={handleAddPutt}
+                onUpdateShot={handleUpdateShot}
+                onOpenTapeMeasure={() => setIsTapeMeasureOpen(true)}
                 onDeleteShot={handleDeleteShot}
                 onUndoLastShot={handleUndoLastShot}
                 onPrevHole={() => handleChangeHole(round.currentHole - 1)}
@@ -1513,7 +1686,7 @@ export default function App() {
       {/* Mobile Fixed Bottom Thumb Navigation Bar (only active once a course is chosen) */}
       {isCourseChosen && (
         <nav
-          className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur-md border-t border-slate-200 grid grid-cols-4 items-center"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/90 dark:bg-[#0c160f]/90 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800/80 px-2 grid grid-cols-4 items-center shadow-2xl"
           aria-label="Mobile navigation"
         >
           {navItems.map((item) => {
@@ -1523,12 +1696,16 @@ export default function App() {
                 key={item.id}
                 type="button"
                 onClick={() => handleSelectNavTab(item.id)}
-                className={`h-full flex flex-col items-center justify-center gap-0.5 transition-colors ${
-                  active ? 'text-emerald-700 font-semibold' : 'text-slate-500'
+                className={`h-12 mx-1 rounded-2xl flex flex-col items-center justify-center gap-0.5 transition-all active:scale-95 ${
+                  active
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 font-bold scale-[1.04]'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                 }`}
               >
                 {item.icon}
-                <span className="text-[10px] tracking-tight whitespace-nowrap">{item.label}</span>
+                <span className="text-[10px] tracking-tight leading-none whitespace-nowrap font-bold">
+                  {item.label}
+                </span>
               </button>
             );
           })}
@@ -1536,6 +1713,14 @@ export default function App() {
       )}
 
       <OfflineIndicator />
+
+      {/* GPS Tape Measure Modal (Feet & Inches) */}
+      <GpsTapeMeasureModal
+        isOpen={isTapeMeasureOpen}
+        onClose={() => setIsTapeMeasureOpen(false)}
+        userPosition={geo.position}
+        accuracyMeters={geo.accuracyMeters}
+      />
     </div>
   );
 }
