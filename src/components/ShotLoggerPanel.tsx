@@ -69,7 +69,7 @@ interface ShotLoggerPanelProps {
   onNextHole: () => void;
   onOpenBagNfc: () => void;
   onUpdateShot?: (shotId: string, updates: Partial<ShotRecord>) => void;
-  onOpenTapeMeasure?: () => void;
+  onAddPenalty: () => void;
   onEnterPocketShield?: () => void;
 }
 
@@ -259,7 +259,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onNextHole,
   onOpenBagNfc,
   onUpdateShot,
-  onOpenTapeMeasure,
+  onAddPenalty,
   onEnterPocketShield,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
@@ -531,10 +531,10 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         )}
 
-        {/* Quick Club Selection Strip */}
-        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2.5 shadow-2xs">
+        {/* Club Selection Dropdown */}
+        <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
           <div className="flex items-center justify-between gap-2">
-            <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+            <label htmlFor="club-select-dropdown" className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <span>Club:</span>
               <span className="text-emerald-700 dark:text-emerald-400 font-black">
                 {selectedClub?.shortName}
@@ -557,54 +557,18 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             )}
           </div>
 
-          {/* Category Filter Pills */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pb-0.5">
-            {CATEGORY_TABS.map((cat) => {
-              const active = clubCategoryFilter === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setClubCategoryFilter(cat.id)}
-                  className={`h-7 px-2.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all ${
-                    active
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Club Chips Grid */}
-          <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5 max-h-28 overflow-y-auto p-1 bg-slate-50/70 dark:bg-slate-950/40 rounded-xl border border-slate-200/60 dark:border-slate-800/60">
-            {displayedClubs.map((club) => {
-              const isSelected = selectedClubId === club.id;
-              return (
-                <button
-                  key={club.id}
-                  type="button"
-                  onClick={() => onSelectClub(club.id)}
-                  className={`h-9 px-2 rounded-lg text-xs font-bold transition-all flex flex-col items-center justify-center border ${
-                    isSelected
-                      ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-600 shadow-sm shadow-emerald-600/30 scale-[1.02]'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <span className="leading-tight">{club.shortName}</span>
-                  <span
-                    className={`text-[9px] font-mono leading-none ${
-                      isSelected ? 'text-emerald-100' : 'text-slate-400'
-                    }`}
-                  >
-                    {club.typicalYards ? `${club.typicalYards}y` : ''}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <select
+            id="club-select-dropdown"
+            value={selectedClubId}
+            onChange={(e) => onSelectClub(e.target.value)}
+            className="w-full h-11 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 font-bold text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            {availableClubs.map((club) => (
+              <option key={club.id} value={club.id}>
+                {club.shortName} · {club.name} ({formatDistanceValue(club.typicalYards, unit)} {suffix})
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Shot Lie / Landing Spot (Colorful Tactile Grid) */}
@@ -621,7 +585,6 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           <div className="grid grid-cols-3 gap-2">
             {LIE_OPTIONS.map((option) => {
               const active = selectedLie === option.id;
-              const meta = getLieMeta(option.id);
               return (
                 <button
                   key={option.id}
@@ -643,119 +606,123 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           </div>
         </div>
 
-        {/* Direction Selector Strip */}
+        {/* Direction, Log Shot, & Undo in the SAME ROW with icons */}
         <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800/90 bg-white dark:bg-[#0c160f] p-3 space-y-2 shadow-2xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-              Flight Direction
+              Flight Direction & Shot Action
             </span>
-            <span className="text-xs font-bold capitalize text-slate-600 dark:text-slate-400">
+            <span className="text-xs font-bold capitalize text-slate-500 dark:text-slate-400">
               {selectedDirection}
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Shot direction">
-            <button
-              type="button"
-              onClick={() => onSelectDirection('left')}
-              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
-                selectedDirection === 'left'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
-                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <CurvedLeftArrowIcon />
-              <span>Left</span>
-            </button>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Direction icons (Left, Straight, Right) */}
+            <div className="flex-1 grid grid-cols-3 gap-1 sm:gap-1.5" role="group" aria-label="Shot direction">
+              <button
+                type="button"
+                onClick={() => onSelectDirection('left')}
+                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                  selectedDirection === 'left'
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+                title="Left"
+                aria-label="Left"
+              >
+                <CurvedLeftArrowIcon className="w-5 h-5" />
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onSelectDirection('straight')}
-              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
-                selectedDirection === 'straight'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
-                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <StraightUpArrowIcon />
-              <span>Straight</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => onSelectDirection('straight')}
+                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                  selectedDirection === 'straight'
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+                title="Straight"
+                aria-label="Straight"
+              >
+                <StraightUpArrowIcon className="w-5 h-5" />
+              </button>
 
-            <button
-              type="button"
-              onClick={() => onSelectDirection('right')}
-              className={`h-11 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 ${
-                selectedDirection === 'right'
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
-                  : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              <CurvedRightArrowIcon />
-              <span>Right</span>
-            </button>
-          </div>
-        </div>
+              <button
+                type="button"
+                onClick={() => onSelectDirection('right')}
+                className={`h-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+                  selectedDirection === 'right'
+                    ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
+                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+                title="Right"
+                aria-label="Right"
+              >
+                <CurvedRightArrowIcon className="w-5 h-5" />
+              </button>
+            </div>
 
-        {/* Ergonomic Big Primary Action Buttons */}
-        <div className="space-y-2 pt-1">
-          <div className="grid grid-cols-2 gap-2.5">
-            {/* LOG SHOT BUTTON */}
+            {/* Log Shot Button (Icon) */}
             <button
               type="button"
               onClick={onLogShot}
-              className="h-14 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.98] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+              className="h-12 w-14 sm:w-16 rounded-xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.96] text-white shadow-md shadow-emerald-600/30 flex items-center justify-center shrink-0 transition-all"
+              title={hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}
+              aria-label={hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}
             >
               <Flag className="w-5 h-5 fill-current" />
-              <span>{hasOpenNfcShot ? 'Finish Shot' : 'Log Shot'}</span>
             </button>
 
-            {/* +1 PUTT BUTTON */}
-            <button
-              type="button"
-              onClick={onAddPutt}
-              className="h-14 rounded-2xl bg-gradient-to-r from-teal-500 via-teal-600 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2 shadow-lg shadow-teal-500/30 transition-all"
-            >
-              <PutterIcon className="w-5 h-5" />
-              <span>+1 Putt</span>
-            </button>
-          </div>
-
-          {/* Secondary Quick Action Row (GPS Tape Measure, Pocket Shield & Undo) */}
-          <div className="grid grid-cols-3 gap-2">
-            {onOpenTapeMeasure && (
-              <button
-                type="button"
-                onClick={onOpenTapeMeasure}
-                className="h-10 px-2 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                title="GPS Tape Measure (Feet & Inches)"
-              >
-                <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span className="truncate">Measure</span>
-              </button>
-            )}
-
-            {onEnterPocketShield && (
-              <button
-                type="button"
-                onClick={onEnterPocketShield}
-                className="h-10 px-2 sm:px-3 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-900/40 text-purple-800 dark:text-purple-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                title="Pocket Shield (OLED Touch Lock while NFC scans)"
-              >
-                <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-                <span className="truncate">Pocket</span>
-              </button>
-            )}
-
+            {/* Undo Button (Icon) */}
             <button
               type="button"
               onClick={onUndoLastShot}
               disabled={!canUndo}
-              className="h-10 px-2 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+              className="h-12 w-12 sm:w-14 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center shrink-0 transition-all shadow-2xs"
+              title="Undo Last Shot"
+              aria-label="Undo Last Shot"
             >
-              <RotateCcw className="w-4 h-4 text-slate-500 shrink-0" />
-              <span className="truncate">Undo</span>
+              <RotateCcw className="w-4 h-4" />
             </button>
           </div>
+        </div>
+
+        {/* Quick Modifiers: +1 Putt, +1 Penalty, & Pocket Shield */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-0.5">
+          {/* +1 PUTT BUTTON */}
+          <button
+            type="button"
+            onClick={onAddPutt}
+            className="h-12 rounded-xl bg-gradient-to-r from-teal-500 via-teal-600 to-cyan-600 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-teal-500/25 transition-all"
+          >
+            <PutterIcon className="w-4 h-4" />
+            <span>+1 Putt</span>
+          </button>
+
+          {/* QUICK BUTTON TO ADD A PENALTY STROKE */}
+          <button
+            type="button"
+            onClick={onAddPenalty}
+            className="h-12 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/80 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-300 active:scale-[0.98] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-2xs transition-all"
+            title="Add 1 Penalty Stroke (+1 Pen)"
+          >
+            <Ban className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+            <span>+1 Penalty</span>
+          </button>
+
+          {/* POCKET SHIELD BUTTON */}
+          {onEnterPocketShield && (
+            <button
+              type="button"
+              onClick={onEnterPocketShield}
+              className="col-span-2 sm:col-span-1 h-12 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-900/40 text-purple-800 dark:text-purple-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+              title="Pocket Shield: Dim OLED screen & lock touches while Web NFC scans"
+            >
+              <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+              <span>Pocket Shield</span>
+            </button>
+          )}
         </div>
 
         {/* Shot Log Feed for Current Hole */}

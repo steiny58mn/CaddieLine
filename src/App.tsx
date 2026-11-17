@@ -1083,6 +1083,63 @@ export default function App() {
     });
   }, []);
 
+  const handleAddPenalty = useCallback(() => {
+    setRound((prev) => {
+      const holeNum = prev.currentHole;
+      const holeScore = prev.scores[holeNum];
+      if (!holeScore) return prev;
+
+      if (holeScore.shots.length > 0) {
+        const updated = holeScore.shots.map((s, idx) =>
+          idx === holeScore.shots.length - 1
+            ? { ...s, penaltyStrokes: (s.penaltyStrokes || 0) + 1 }
+            : s
+        );
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          scores: {
+            ...prev.scores,
+            [holeNum]: {
+              ...holeScore,
+              shots: updated,
+            },
+          },
+        };
+      }
+
+      const penShot: ShotRecord = {
+        id: `shot_${Date.now()}_pen`,
+        holeNumber: holeNum,
+        strokeNumber: 1,
+        clubId: 'pen',
+        clubName: 'Penalty',
+        clubShortName: 'PEN',
+        lie: 'water',
+        direction: 'straight',
+        penaltyStrokes: 1,
+        distanceYards: null,
+        timestamp: Date.now(),
+        source: 'manual',
+        isPutt: false,
+      };
+
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: [penShot],
+          },
+        },
+      };
+    });
+
+    setLastNfcFeedback('Added +1 Penalty Stroke');
+  }, []);
+
   const handleUndoLastShot = useCallback(() => {
     let nextOrigin: LatLngLiteral | null = null;
     const currentRound = roundRef.current;
@@ -1419,16 +1476,15 @@ export default function App() {
             </div>
           )}
 
-          {/* GPS Tape Measure tool button */}
+          {/* GPS Tape Measure icon button at the very top */}
           <button
             type="button"
             onClick={() => setIsTapeMeasureOpen(true)}
-            className="h-9 px-2.5 sm:px-3 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-2xs active:scale-95"
-            title="GPS Tape Measure (Measure in Feet & Inches)"
+            className="h-9 w-9 rounded-xl border border-emerald-200/80 dark:border-emerald-800/80 bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100/80 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 flex items-center justify-center shrink-0 transition-all shadow-2xs active:scale-95"
+            title="GPS Tape Measure (Feet & Inches)"
             aria-label="Open GPS Tape Measure"
           >
             <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span className="hidden sm:inline">Tape Measure</span>
           </button>
 
           {/* Screen Wake Lock button */}
@@ -1536,30 +1592,33 @@ export default function App() {
 
         {isCourseChosen && activeTab === 'stats' && (
           <div className="h-full flex flex-col lg:grid lg:grid-cols-[440px_1fr] pb-14 md:pb-0">
-            {/* Mobile Sub-Switcher: Enter Hole Stats vs Round Analytics */}
-            <div className="lg:hidden px-3 py-2 bg-white border-b border-slate-200 shrink-0">
-              <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl">
+            {/* Mobile Sub-Switcher: Small toggle to switch between Hole Stats and Round Analytics (fully supports dark mode) */}
+            <div className="lg:hidden px-3 py-1.5 bg-slate-50 dark:bg-[#0c160f] border-b border-slate-200/80 dark:border-slate-800/80 flex items-center justify-between shrink-0">
+              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                {statsSubTab === 'entry' ? `Hole ${round.currentHole} Log` : 'Round Stats'}
+              </span>
+              <div className="flex items-center gap-1 p-0.5 bg-slate-200/80 dark:bg-slate-800/80 rounded-xl text-xs">
                 <button
                   type="button"
                   onClick={() => setStatsSubTab('entry')}
-                  className={`min-h-[40px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                  className={`px-3 py-1 rounded-lg font-bold text-xs transition-all ${
                     statsSubTab === 'entry'
-                      ? 'bg-white text-[#0F1A14] shadow-xs'
-                      : 'text-slate-600 hover:text-[#0F1A14]'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  Enter Hole Stats
+                  Hole Stats
                 </button>
                 <button
                   type="button"
                   onClick={() => setStatsSubTab('analytics')}
-                  className={`min-h-[40px] px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                  className={`px-3 py-1 rounded-lg font-bold text-xs transition-all ${
                     statsSubTab === 'analytics'
-                      ? 'bg-white text-[#0F1A14] shadow-xs'
-                      : 'text-slate-600 hover:text-[#0F1A14]'
+                      ? 'bg-white dark:bg-emerald-600 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                   }`}
                 >
-                  Round Analytics
+                  Analytics
                 </button>
               </div>
             </div>
@@ -1591,7 +1650,7 @@ export default function App() {
                 onLogShot={handleLogShotManual}
                 onAddPutt={handleAddPutt}
                 onUpdateShot={handleUpdateShot}
-                onOpenTapeMeasure={() => setIsTapeMeasureOpen(true)}
+                onAddPenalty={handleAddPenalty}
                 onEnterPocketShield={pocketMode.enterPocketShield}
                 onDeleteShot={handleDeleteShot}
                 onUndoLastShot={handleUndoLastShot}

@@ -145,7 +145,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
             type="button"
             onClick={handleExportCsv}
             disabled={allShots.length === 0}
-            className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-40 inline-flex items-center gap-2 whitespace-nowrap"
+            className="min-h-[44px] px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 inline-flex items-center gap-2 whitespace-nowrap transition-colors"
           >
             <Download className="w-4 h-4" />
             <span>Export CSV</span>
@@ -154,7 +154,7 @@ export const StatsView: React.FC<StatsViewProps> = ({
           <button
             type="button"
             onClick={onResetRound}
-            className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+            className="min-h-[44px] px-4 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 whitespace-nowrap transition-colors"
           >
             End Round
           </button>
