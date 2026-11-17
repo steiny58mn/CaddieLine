@@ -12,6 +12,7 @@ import {
   Radio,
   RotateCcw,
   Ruler,
+  Shield,
   Trash2,
   Trees,
   Waves,
@@ -69,6 +70,7 @@ interface ShotLoggerPanelProps {
   onOpenBagNfc: () => void;
   onUpdateShot?: (shotId: string, updates: Partial<ShotRecord>) => void;
   onOpenTapeMeasure?: () => void;
+  onEnterPocketShield?: () => void;
 }
 
 const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -258,6 +260,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onOpenBagNfc,
   onUpdateShot,
   onOpenTapeMeasure,
+  onEnterPocketShield,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
   const [editingShot, setEditingShot] = useState<ShotRecord | null>(null);
@@ -717,17 +720,29 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             </button>
           </div>
 
-          {/* Secondary Quick Action Row (GPS Tape Measure & Undo) */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Secondary Quick Action Row (GPS Tape Measure, Pocket Shield & Undo) */}
+          <div className="grid grid-cols-3 gap-2">
             {onOpenTapeMeasure && (
               <button
                 type="button"
                 onClick={onOpenTapeMeasure}
-                className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                className="h-10 px-2 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
                 title="GPS Tape Measure (Feet & Inches)"
               >
-                <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>GPS Tape Measure</span>
+                <Ruler className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span className="truncate">Measure</span>
+              </button>
+            )}
+
+            {onEnterPocketShield && (
+              <button
+                type="button"
+                onClick={onEnterPocketShield}
+                className="h-10 px-2 sm:px-3 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/60 dark:bg-purple-950/20 hover:bg-purple-100/60 dark:hover:bg-purple-900/40 text-purple-800 dark:text-purple-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+                title="Pocket Shield (OLED Touch Lock while NFC scans)"
+              >
+                <Shield className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                <span className="truncate">Pocket</span>
               </button>
             )}
 
@@ -735,10 +750,10 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
               type="button"
               onClick={onUndoLastShot}
               disabled={!canUndo}
-              className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
+              className="h-10 px-2 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
             >
-              <RotateCcw className="w-4 h-4 text-slate-500" />
-              <span>Undo Last</span>
+              <RotateCcw className="w-4 h-4 text-slate-500 shrink-0" />
+              <span className="truncate">Undo</span>
             </button>
           </div>
         </div>
@@ -882,20 +897,27 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
         )}
 
         {/* Edit Shot Modal */}
-        <EditShotModal
-          shot={editingShot}
-          isOpen={Boolean(editingShot)}
-          onClose={() => setEditingShot(null)}
-          onSave={(shotId, updates) => {
-            onUpdateShot?.(shotId, updates);
-            setEditingShot(null);
-          }}
-          onDelete={(shotId) => {
-            onDeleteShot(shotId);
-            setEditingShot(null);
-          }}
-          bag={availableClubs}
-        />
+        {(() => {
+          const editingShotIndex = editingShot ? holeScore.shots.findIndex((s) => s.id === editingShot.id) : -1;
+          const previousShotLie = editingShotIndex > 0 ? holeScore.shots[editingShotIndex - 1]?.lie : null;
+          return (
+            <EditShotModal
+              shot={editingShot}
+              isOpen={Boolean(editingShot)}
+              onClose={() => setEditingShot(null)}
+              onSave={(shotId, updates) => {
+                onUpdateShot?.(shotId, updates);
+                setEditingShot(null);
+              }}
+              onDelete={(shotId) => {
+                onDeleteShot(shotId);
+                setEditingShot(null);
+              }}
+              bag={availableClubs}
+              previousShotLie={previousShotLie}
+            />
+          );
+        })()}
       </div>
     </div>
   );

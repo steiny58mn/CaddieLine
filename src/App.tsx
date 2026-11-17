@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ClipboardList, Map as MapIcon, Moon, Nfc, Ruler, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
+import { BarChart3, ClipboardList, Map as MapIcon, Moon, Nfc, Ruler, Shield, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -25,6 +25,7 @@ import {
   getLieMeta,
   isHolePlayed,
   isShotPutt,
+  resolveHoleShotsPutts,
 } from './utils/golfMath';
 import {
   applyOsmGeometryToHoles,
@@ -50,6 +51,8 @@ import { CourseLandingView } from './components/CourseLandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { GpsTapeMeasureModal } from './components/GpsTapeMeasureModal';
 import { useWakeLock } from './hooks/useWakeLock';
+import { usePocketMode } from './hooks/usePocketMode';
+import { PocketShield } from './components/PocketShield';
 
 const STORAGE_KEYS = {
   ROUND: 'caddieline_active_round_v1',
@@ -98,6 +101,14 @@ export default function App() {
 
   // Screen Wake Lock & GPS Tape Measure Modal State
   const wakeLock = useWakeLock();
+  const pocketMode = usePocketMode();
+
+  // Auto-acquire wake lock when Pocket Shield is active so Web NFC scanning continues uninterrupted
+  useEffect(() => {
+    if (pocketMode.isPocketShieldActive && wakeLock.isSupported && !wakeLock.isWakeLockActive) {
+      void wakeLock.requestWakeLock();
+    }
+  }, [pocketMode.isPocketShieldActive, wakeLock]);
   const [isTapeMeasureOpen, setIsTapeMeasureOpen] = useState(false);
 
   const [round, setRound] = useState<RoundState>(() =>
@@ -452,8 +463,8 @@ export default function App() {
           isPutt: resolvedIsPutt,
         };
 
-        const nextShots = [...holeScore.shots, newShot];
-        const nextManualPutts = nextShots.filter(isShotPutt).length + extraLegacyPutts;
+        const nextShots = resolveHoleShotsPutts([...holeScore.shots, newShot]);
+        const nextManualPutts = nextShots.filter((s) => s.isPutt).length;
 
         return {
           ...prev,
@@ -531,6 +542,7 @@ export default function App() {
             : s
         );
 
+        const resolved = resolveHoleShotsPutts(updatedShots);
         return {
           ...prev,
           updatedAt: Date.now(),
@@ -538,8 +550,8 @@ export default function App() {
             ...prev.scores,
             [holeNum]: {
               ...holeScore,
-              shots: updatedShots,
-              manualPutts: updatedShots.filter(isShotPutt).length + extraLegacyPutts,
+              shots: resolved,
+              manualPutts: resolved.filter((s) => s.isPutt).length,
             },
           },
         };
@@ -618,6 +630,11 @@ export default function App() {
                 }
               : s
           );
+        } else if (last.lie !== 'green' && !last.isPutt) {
+          // If the golfer reached the green to putt, the previous approach shot ended on the green
+          updatedShots = updatedShots.map((s, idx) =>
+            idx === updatedShots.length - 1 ? { ...s, lie: 'green' } : s
+          );
         }
       }
 
@@ -639,8 +656,8 @@ export default function App() {
         isPutt: true,
       };
 
-      const nextShots = [...updatedShots, puttShot];
-      const nextPutts = nextShots.filter(isShotPutt).length + extraLegacyPutts;
+      const nextShots = resolveHoleShotsPutts([...updatedShots, puttShot]);
+      const nextPutts = nextShots.filter((s) => s.isPutt).length;
 
       return {
         ...prev,
@@ -836,8 +853,11 @@ export default function App() {
           }
         }
 
-        // If Putter tag is scanned: default Where Shot Landed to Green and log as a putt
+        // If Putter tag is scanned: counts as putt ONLY if previous shot ended on green
         if (isPutter) {
+          const prevShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
+          const isPutt = prevShot ? prevShot.lie === 'green' : true;
+
           const puttShot: ShotRecord = {
             id: newShotId,
             holeNumber: holeNum,
@@ -853,10 +873,10 @@ export default function App() {
             endLatLng: gpsFix ?? undefined,
             timestamp: Date.now(),
             source: 'nfc',
-            isPutt: true,
+            isPutt,
           };
-          const nextShots = [...updatedShots, puttShot];
-          const nextPutts = nextShots.filter(isShotPutt).length + extraLegacyPutts;
+          const nextShots = resolveHoleShotsPutts([...updatedShots, puttShot]);
+          const nextPutts = nextShots.filter((s) => s.isPutt).length;
 
           return {
             ...prev,
@@ -1004,26 +1024,21 @@ export default function App() {
       const holeScore = prev.scores[holeNum];
       if (!holeScore) return prev;
 
-      const prevLoggedPutts = holeScore.shots.filter(isShotPutt).length;
-      const extraLegacyPutts = Math.max(0, holeScore.manualPutts - prevLoggedPutts);
-
       const updatedShots = holeScore.shots.map((s) => {
         if (s.id !== shotId) return s;
         const merged: ShotRecord = { ...s, ...updates };
 
-        // Explicit rule:
-        // If lie is changed to green or holed, mark as putt.
-        // If lie is changed to non-green, subtract it from being a putt.
-        if (updates.lie !== undefined) {
-          merged.isPutt = updates.lie === 'green' || updates.lie === 'holed';
-          if (updates.penaltyStrokes === undefined) {
-            merged.penaltyStrokes = getLieMeta(merged.lie).penalty;
-          }
+        if (updates.lie !== undefined && updates.penaltyStrokes === undefined) {
+          merged.penaltyStrokes = getLieMeta(merged.lie).penalty;
         }
         return merged;
       });
 
-      const nextPutts = updatedShots.filter(isShotPutt).length + extraLegacyPutts;
+      // Sequential golf rule resolution:
+      // Non-putters are never putts (regardless of landing lie).
+      // Putter strokes count as putts only if the previous shot landed on the green.
+      const resolved = resolveHoleShotsPutts(updatedShots);
+      const nextPutts = resolved.filter((s) => s.isPutt).length;
 
       return {
         ...prev,
@@ -1032,7 +1047,7 @@ export default function App() {
           ...prev.scores,
           [holeNum]: {
             ...holeScore,
-            shots: updatedShots,
+            shots: resolved,
             manualPutts: nextPutts,
           },
         },
@@ -1049,10 +1064,9 @@ export default function App() {
       const holeScore = prev.scores[holeNum];
       const prevLoggedPutts = holeScore.shots.filter(isShotPutt).length;
       const extraLegacyPutts = Math.max(0, holeScore.manualPutts - prevLoggedPutts);
-      const filtered = holeScore.shots
-        .filter((s) => s.id !== shotId)
-        .map((s, idx) => ({ ...s, strokeNumber: idx + 1 }));
-      const remainingPutts = filtered.filter(isShotPutt).length + extraLegacyPutts;
+      const filtered = holeScore.shots.filter((s) => s.id !== shotId);
+      const resolved = resolveHoleShotsPutts(filtered);
+      const remainingPutts = resolved.filter((s) => s.isPutt).length;
       return {
         ...prev,
         updatedAt: Date.now(),
@@ -1060,7 +1074,7 @@ export default function App() {
           ...prev.scores,
           [holeNum]: {
             ...holeScore,
-            shots: filtered,
+            shots: resolved,
             manualPutts: remainingPutts,
           },
         },
@@ -1082,12 +1096,8 @@ export default function App() {
       const holeScore = prev.scores[holeNum];
 
       if (holeScore.shots.length > 0) {
-        const removedShot = holeScore.shots[holeScore.shots.length - 1];
-        const prevLoggedPutts = holeScore.shots.filter(isShotPutt).length;
-        const extraLegacyPutts = Math.max(0, holeScore.manualPutts - prevLoggedPutts);
-        const remainingShots = holeScore.shots.slice(0, -1);
-        const remainingPutts = remainingShots.filter(isShotPutt).length + extraLegacyPutts;
-        const removedWasPutt = isShotPutt(removedShot);
+        const remainingShots = resolveHoleShotsPutts(holeScore.shots.slice(0, -1));
+        const remainingPutts = remainingShots.filter((s) => s.isPutt).length;
         const nextLast = remainingShots[remainingShots.length - 1];
         nextOrigin = nextLast?.endLatLng ?? nextLast?.startLatLng ?? null;
 
@@ -1099,9 +1109,7 @@ export default function App() {
             [holeNum]: {
               ...holeScore,
               shots: remainingShots,
-              manualPutts: removedWasPutt
-                ? remainingPutts
-                : holeScore.manualPutts,
+              manualPutts: remainingPutts,
             },
           },
         };
@@ -1456,6 +1464,22 @@ export default function App() {
             </button>
           )}
 
+          {/* Pocket Shield Mode button */}
+          <button
+            type="button"
+            onClick={pocketMode.togglePocketShield}
+            className={`h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-2xs active:scale-95 ${
+              pocketMode.isPocketShieldActive
+                ? 'border-purple-500 bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'
+            }`}
+            title="Pocket Shield: Dim OLED screen & lock touches to keep Web NFC active in pocket"
+            aria-label="Toggle pocket shield mode"
+          >
+            <Shield className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" />
+            <span className="hidden sm:inline">Pocket Shield</span>
+          </button>
+
           {/* Dark Mode Toggle */}
           <button
             type="button"
@@ -1567,6 +1591,7 @@ export default function App() {
                 onAddPutt={handleAddPutt}
                 onUpdateShot={handleUpdateShot}
                 onOpenTapeMeasure={() => setIsTapeMeasureOpen(true)}
+                onEnterPocketShield={pocketMode.enterPocketShield}
                 onDeleteShot={handleDeleteShot}
                 onUndoLastShot={handleUndoLastShot}
                 onPrevHole={() => handleChangeHole(round.currentHole - 1)}
@@ -1720,6 +1745,15 @@ export default function App() {
         onClose={() => setIsTapeMeasureOpen(false)}
         userPosition={geo.position}
         accuracyMeters={geo.accuracyMeters}
+      />
+
+      {/* OLED Pocket Shield (Touch-Lock overlay with Web NFC active) */}
+      <PocketShield
+        isActive={pocketMode.isPocketShieldActive}
+        onExit={pocketMode.exitPocketShield}
+        holeNumber={round.currentHole}
+        par={currentHoleData.par}
+        lastNfcFeedback={lastNfcFeedback}
       />
     </div>
   );

@@ -1,10 +1,11 @@
 ﻿import React, { useEffect, useState } from 'react';
 import { Check, Edit3, Trash2, X } from 'lucide-react';
 import { Club, ShotDirection, ShotLie, ShotRecord } from '../types/golf';
-import { CLUB_PRESETS, ClubPreset, getLieMeta } from '../utils/golfMath';
+import { CLUB_PRESETS, ClubPreset, getLieMeta, isPutterClub } from '../utils/golfMath';
 
 interface EditShotModalProps {
   shot: ShotRecord | null;
+  previousShotLie?: ShotLie | null;
   isOpen: boolean;
   onClose: () => void;
   onSave: (shotId: string, updates: Partial<ShotRecord>) => void;
@@ -34,6 +35,7 @@ const DIRECTION_OPTIONS: ShotDirection[] = [
 
 export const EditShotModal: React.FC<EditShotModalProps> = ({
   shot,
+  previousShotLie,
   isOpen,
   onClose,
   onSave,
@@ -64,16 +66,13 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
     clubPool.find((c) => c.id === selectedClubId) ??
     clubPool[0];
 
-  const isGreenOrHoled = selectedLie === 'green' || selectedLie === 'holed';
+  const isCurrentPutter = isPutterClub(currentClub);
+
+  // A putter shot counts as a putt ONLY if the ball was already on the green when hit (previous shot lie === 'green')
+  const willBePutt = isCurrentPutter && (previousShotLie !== undefined ? previousShotLie === 'green' : (shot.isPutt ?? false));
 
   const handleLieChange = (lie: ShotLie) => {
     setSelectedLie(lie);
-    // If user changes to green and club is not putter, suggest putter if available
-    if (lie === 'green' && selectedClubId !== 'pt') {
-      const putter = clubPool.find((c) => c.category === 'putter' || c.id === 'pt');
-      if (putter) setSelectedClubId(putter.id);
-    }
-    // Update default penalty
     const meta = getLieMeta(lie);
     setPenaltyStrokes(meta.penalty);
   };
@@ -87,7 +86,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
       direction: selectedDirection,
       distanceYards: distanceYards > 0 ? distanceYards : null,
       penaltyStrokes,
-      isPutt: isGreenOrHoled,
+      isPutt: willBePutt,
     });
     onClose();
   };
@@ -99,26 +98,26 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white dark:bg-[#101b13] border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white dark:bg-[#101b13] border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 flex items-center justify-center">
-              <Edit3 className="w-4 h-4" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 flex items-center justify-center">
+              <Edit3 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-[#0F1A14] dark:text-slate-100">
+              <h2 className="text-base font-black text-[#0F1A14] dark:text-slate-100">
                 Edit Shot #{shot.strokeNumber}
               </h2>
               <p className="text-[11px] text-slate-500">
-                Hole {shot.holeNumber} · {shot.source === 'nfc' ? 'NFC Tracked' : 'Manual Entry'}
+                Hole {shot.holeNumber} · {shot.source === 'nfc' ? 'NFC Club Scan' : 'Manual Entry'}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -128,10 +127,10 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {/* Club Selection */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Club Used
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+              Club Used for this Shot
             </label>
-            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-900/60 rounded-xl border border-slate-200/80 dark:border-slate-800">
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-slate-200/80 dark:border-slate-800">
               {clubPool.map((c) => {
                 const isSelected = selectedClubId === c.id;
                 return (
@@ -139,9 +138,9 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                     key={c.id}
                     type="button"
                     onClick={() => setSelectedClubId(c.id)}
-                    className={`h-8 px-2.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border ${
+                    className={`h-8 px-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
                       isSelected
-                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-600 shadow-sm shadow-emerald-600/30'
                         : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700'
                     }`}
                   >
@@ -152,12 +151,18 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
             </div>
           </div>
 
-          {/* Lie Selection & Surface */}
+          {/* Lie Selection (Where Shot Ended Up) */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-              Lie & Surface
-            </label>
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                Where Shot Ended Up (Landing Lie)
+              </label>
+              <span className="text-[11px] font-semibold text-slate-500">
+                {getLieMeta(selectedLie).label}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
               {LIE_OPTIONS.map((lie) => {
                 const meta = getLieMeta(lie);
                 const isSelected = selectedLie === lie;
@@ -166,9 +171,9 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                     key={lie}
                     type="button"
                     onClick={() => handleLieChange(lie)}
-                    className={`h-9 px-2 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border ${
+                    className={`h-10 px-2 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 border ${
                       isSelected
-                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                        ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-600 shadow-sm shadow-emerald-600/30 font-bold'
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
@@ -182,23 +187,30 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
               })}
             </div>
 
-            {/* Dynamic Putt Notification Banner */}
-            <div
-              className={`p-2.5 rounded-xl text-xs font-medium flex items-center gap-2 mt-2 transition-colors ${
-                isGreenOrHoled
-                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                  : 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
-              }`}
-            >
-              {isGreenOrHoled ? (
-                <>
-                  <Check className="w-4 h-4 text-emerald-700 shrink-0" />
-                  <span>Counted as a Putt (adds +1 to hole putts)</span>
-                </>
+            {/* Putt / Stroke Rule Explanation Banner */}
+            <div className="p-3 rounded-2xl text-xs font-semibold flex items-center gap-2 mt-2 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+              {isCurrentPutter ? (
+                willBePutt ? (
+                  <>
+                    <Check className="w-4 h-4 text-teal-600 shrink-0" />
+                    <span className="text-teal-800 dark:text-teal-300">
+                      Putt on the Green (previous shot landed on green → counted as a putt)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                    <span className="text-amber-800 dark:text-amber-300">
+                      Off-green putter stroke (Texas wedge — previous lie was {previousShotLie || 'off green'} → counted as a regular stroke, not a putt)
+                    </span>
+                  </>
+                )
               ) : (
                 <>
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-600 shrink-0" />
-                  <span>Lie is off green — not counted as a putt (-1 if previously a putt)</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="text-slate-700 dark:text-slate-300">
+                    Shot with {currentClub.name} landing on {getLieMeta(selectedLie).label} (landing lie is recorded; counted as a regular stroke)
+                  </span>
                 </>
               )}
             </div>
@@ -206,7 +218,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
 
           {/* Direction */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Shot Direction
             </label>
             <div className="grid grid-cols-5 gap-1.5">
@@ -217,9 +229,9 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                     key={dir}
                     type="button"
                     onClick={() => setSelectedDirection(dir)}
-                    className={`h-8 px-2 rounded-xl text-xs font-semibold capitalize border transition-all ${
+                    className={`h-9 px-2 rounded-xl text-xs font-bold capitalize border transition-all ${
                       isSelected
-                        ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs'
+                        ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
@@ -232,7 +244,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
 
           {/* Distance */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Distance (Yards)
             </label>
             <div className="flex items-center gap-2">
@@ -242,7 +254,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                 max={550}
                 value={distanceYards || ''}
                 onChange={(e) => setDistanceYards(Math.max(0, parseInt(e.target.value) || 0))}
-                className="flex-1 h-11 px-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-bold text-[#0F1A14] dark:text-slate-100 font-mono"
+                className="flex-1 h-11 px-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm font-bold text-[#0F1A14] dark:text-slate-100 font-mono"
                 placeholder="Yards"
               />
               <div className="flex items-center gap-1">
@@ -251,7 +263,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                     key={delta}
                     type="button"
                     onClick={() => setDistanceYards((prev) => Math.max(0, prev + delta))}
-                    className="h-11 px-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 transition-colors"
+                    className="h-11 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors"
                   >
                     {delta > 0 ? `+${delta}` : delta}
                   </button>
@@ -261,8 +273,8 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
           </div>
 
           {/* Penalty */}
-          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+          <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Penalty Strokes
             </span>
             <div className="flex items-center gap-1.5">
@@ -271,7 +283,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
                   key={pen}
                   type="button"
                   onClick={() => setPenaltyStrokes(pen)}
-                  className={`w-9 h-8 rounded-lg text-xs font-bold border transition-colors ${
+                  className={`w-10 h-9 rounded-xl text-xs font-black border transition-colors ${
                     penaltyStrokes === pen
                       ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
                       : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -289,7 +301,7 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
           <button
             type="button"
             onClick={handleDelete}
-            className="h-11 px-3.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            className="h-11 px-3.5 rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
           >
             <Trash2 className="w-4 h-4" />
             <span>Delete</span>
@@ -299,14 +311,14 @@ export const EditShotModal: React.FC<EditShotModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
+              className="h-11 px-4 rounded-2xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold transition-colors"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="h-11 px-5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold transition-colors shadow-xs"
+              className="h-11 px-5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/25"
             >
               Save Changes
             </button>

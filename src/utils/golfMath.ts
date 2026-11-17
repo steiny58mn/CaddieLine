@@ -8,6 +8,7 @@ import {
   RoundState,
   ShotDirection,
   ShotLie,
+  ShotRecord,
 } from '../types/golf';
 
 export interface ClubPreset {
@@ -510,21 +511,80 @@ export function createInitialRoundState(course: RoundState['course'] = null): Ro
   };
 }
 
-export function isShotPutt(shot: {
-  clubId: string;
-  clubName: string;
-  lie: ShotLie;
-  isPutt?: boolean;
-}): boolean {
-  // If lie is NOT green and NOT holed, it cannot be a putt
-  if (shot.lie !== 'green' && shot.lie !== 'holed') {
+export function isPutterClub(club: {
+  clubId?: string;
+  clubName?: string;
+  id?: string;
+  name?: string;
+  category?: string;
+} | null | undefined): boolean {
+  if (!club) return false;
+  if (club.category === 'putter') return true;
+  if (club.id === 'pt' || club.clubId === 'pt') return true;
+  const name = (club.name || club.clubName || '').toLowerCase();
+  return name.includes('putt');
+}
+
+/**
+ * A shot is counted as a putt ONLY if:
+ * 1. It was hit with a putter (or manually entered as a putt), AND
+ * 2. The ball was already on the green when hit (meaning the previous shot's lie was 'green').
+ * Ending up on the green or in the cup does NOT make an approach shot a putt.
+ */
+export function isShotPutt(
+  shot: {
+    clubId?: string;
+    clubName?: string;
+    lie?: ShotLie;
+    isPutt?: boolean;
+  },
+  previousContext?: unknown
+): boolean {
+  // If called as Array.prototype.filter(isShotPutt), previousContext is index (number)
+  if (typeof previousContext === 'number' || previousContext === undefined) {
+    return Boolean(shot.isPutt);
+  }
+
+  // Non-putter strokes are NEVER putts (e.g. 7-iron landing on green is NOT a putt)
+  if (!isPutterClub(shot) && !shot.isPutt) {
     return false;
   }
-  // If lie is green or holed, it is counted as a putt unless explicitly disabled
-  if (shot.isPutt !== undefined) {
-    return shot.isPutt;
+
+  // Putter stroke: counts as a putt ONLY if previous shot landed on green!
+  if (typeof previousContext === 'string') {
+    return previousContext === 'green';
   }
-  return true;
+  if (previousContext && typeof previousContext === 'object' && 'lie' in previousContext) {
+    return (previousContext as { lie: ShotLie }).lie === 'green';
+  }
+
+  return Boolean(shot.isPutt);
+}
+
+/**
+ * Re-evaluates every shot on a hole:
+ * - Approach shots landing on the green are NOT putts.
+ * - Hole-outs from off the green are NOT putts.
+ * - Putter strokes count as putts ONLY if the previous shot landed on the green.
+ * - Putter strokes from off the green (fringe/fairway/rough) are NOT counted as putts.
+ */
+export function resolveHoleShotsPutts(shots: ShotRecord[]): ShotRecord[] {
+  return shots.map((shot, idx) => {
+    const isPutter = isPutterClub(shot);
+    if (!isPutter) {
+      // Non-putter shot: landing on green/holed does NOT make it a putt!
+      return shot.isPutt ? { ...shot, isPutt: false } : shot;
+    }
+
+    // Putter stroke: counts as a putt ONLY if previous shot was on the green
+    const prevShot = idx > 0 ? shots[idx - 1] : null;
+    const countedAsPutt = prevShot ? prevShot.lie === 'green' : (shot.isPutt ?? false);
+
+    if (shot.isPutt !== countedAsPutt) {
+      return { ...shot, isPutt: countedAsPutt };
+    }
+    return shot;
+  });
 }
 
 export interface DistanceFeetInches {
