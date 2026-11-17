@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CaddieLine</string>
+    <string name="title_activity_main">CaddieLine</string>
+    <string name="package_name">com.caddieline.app</string>
+    <string name="custom_url_scheme">com.caddieline.app</string>
+</resources>

@@ -25,6 +25,10 @@ interface NDEFReaderInstance extends EventTarget {
 declare global {
   interface Window {
     NDEFReader?: new () => NDEFReaderInstance;
+    Capacitor?: {
+      isNativePlatform?: () => boolean;
+      getPlatform?: () => string;
+    };
   }
 }
 
@@ -38,8 +42,19 @@ export interface NfcTapPayload {
 export type NfcStatus = 'unsupported' | 'idle' | 'scanning' | 'error';
 
 export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
-  const isSupported = typeof window !== 'undefined' && 'NDEFReader' in window;
-  const [status, setStatus] = useState<NfcStatus>(isSupported ? 'idle' : 'unsupported');
+  const isCapacitorNative =
+    typeof window !== 'undefined' &&
+    Boolean(
+      window.Capacitor?.isNativePlatform?.() ||
+      window.Capacitor?.getPlatform?.() === 'android'
+    );
+
+  const isWebNfcSupported = typeof window !== 'undefined' && 'NDEFReader' in window;
+  const isSupported = isCapacitorNative || isWebNfcSupported;
+
+  const [status, setStatus] = useState<NfcStatus>(
+    isCapacitorNative ? 'scanning' : isWebNfcSupported ? 'idle' : 'unsupported'
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastTap, setLastTap] = useState<NfcTapPayload | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -49,16 +64,53 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
     callbackRef.current = onTagTap;
   }, [onTagTap]);
 
+  // Listen for native Android NFC tag dispatches from MainActivity
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleNativeTag = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tagId: string; text?: string }>;
+      const tagId = customEvent.detail?.tagId?.trim().toUpperCase();
+      if (!tagId) return;
+
+      const rawRecords = customEvent.detail.text ? [customEvent.detail.text] : [];
+      const payload: NfcTapPayload = {
+        tagId,
+        rawRecords,
+        source: 'hardware',
+        timestamp: Date.now(),
+      };
+      setLastTap(payload);
+      callbackRef.current(payload);
+    };
+
+    window.addEventListener('nativeNfcTag', handleNativeTag);
+    if (isCapacitorNative) {
+      setStatus('scanning');
+    }
+    return () => window.removeEventListener('nativeNfcTag', handleNativeTag);
+  }, [isCapacitorNative]);
+
   const stopScan = useCallback(() => {
+    if (isCapacitorNative) {
+      setStatus('idle');
+      return;
+    }
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
     setStatus(isSupported ? 'idle' : 'unsupported');
-  }, [isSupported]);
+  }, [isCapacitorNative, isSupported]);
 
   const startScan = useCallback(async () => {
-    if (!isSupported || !window.NDEFReader) {
+    if (isCapacitorNative) {
+      setStatus('scanning');
+      setErrorMessage(null);
+      return;
+    }
+
+    if (!isWebNfcSupported || !window.NDEFReader) {
       setStatus('unsupported');
       setErrorMessage(
         'Web NFC hardware scanning requires Chrome on Android over HTTPS. Use the Tag Simulator below to test on this device.'
@@ -125,12 +177,12 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
       const rawMsg = err instanceof Error ? err.message : 'Unable to start Web NFC scanner.';
       const msg =
         inIframe || rawMsg.toLowerCase().includes('frame') || rawMsg.toLowerCase().includes('not allowed')
-          ? 'Hardware Web NFC is blocked inside embedded preview frames. Tap "Install Android App" or open this page directly in Chrome on Android to use your phone NFC reader.'
+          ? 'Hardware Web NFC is blocked inside embedded preview frames. Install the Android App or open this page directly in Chrome on Android.'
           : rawMsg;
       setStatus('error');
       setErrorMessage(msg);
     }
-  }, [isSupported]);
+  }, [isCapacitorNative, isWebNfcSupported]);
 
   const simulateTap = useCallback((tagId: string) => {
     const payload: NfcTapPayload = {
