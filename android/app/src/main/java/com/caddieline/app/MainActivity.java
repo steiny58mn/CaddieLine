@@ -33,20 +33,20 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         configureShowWhenLocked();
         enableNfcReaderMode();
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         super.onPause();
         disableNfcReaderMode();
     }
 
     @Override
-    protected void onNewIntent(Intent intent) {
+    public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         configureShowWhenLocked();

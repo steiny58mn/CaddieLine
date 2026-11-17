@@ -41,6 +41,7 @@ export function useGeolocation(): GeolocationState {
   const [status, setStatus] = useState<GpsStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const watchIdRef = useRef<number | null>(null);
+  const lastAccuracyRef = useRef<number | null>(null);
 
   const startWatch = useCallback(() => {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
@@ -58,15 +59,26 @@ export function useGeolocation(): GeolocationState {
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
+        const accuracy = Math.round(pos.coords.accuracy);
         const next: LatLngLiteral = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         };
+
+        // If we already hold an accurate GPS fix (<15m / ~45ft) and a temporary wild coarse fix (>35m) arrives,
+        // keep the accurate position to prevent phantom jumps, while still displaying current accuracy.
+        const prevAcc = lastAccuracyRef.current;
+        if (prevAcc !== null && prevAcc <= 15 && accuracy > 35) {
+          setAccuracyMeters(accuracy);
+          return;
+        }
+
+        lastAccuracyRef.current = accuracy;
         try {
           localStorage.setItem(GPS_CACHE_KEY, JSON.stringify(next));
         } catch {}
         setLivePosition(next);
-        setAccuracyMeters(Math.round(pos.coords.accuracy));
+        setAccuracyMeters(accuracy);
         setStatus((prev) => (prev === 'manual' ? 'manual' : 'watching'));
         setErrorMessage(null);
       },
@@ -81,8 +93,8 @@ export function useGeolocation(): GeolocationState {
       },
       {
         enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 12000,
+        maximumAge: 0,
+        timeout: 15000,
       }
     );
   }, []);

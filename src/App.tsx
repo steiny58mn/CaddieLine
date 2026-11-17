@@ -345,7 +345,11 @@ export default function App() {
   const autoDetectedDistanceYards = useMemo(() => {
     if (currentOriginLatLng && geo.position) {
       const dist = computeDistanceYards(currentOriginLatLng, geo.position);
-      if (dist >= 0 && dist < 500) return dist;
+      if (dist >= 0 && dist < 500) {
+        // Suppress stationary GPS jitter (distances under 4 yards return 0 until user begins walking)
+        if (dist < 4) return 0;
+        return dist;
+      }
     }
     if (currentOriginLatLng && targetPin) {
       const dist = computeDistanceYards(currentOriginLatLng, targetPin);
@@ -353,6 +357,43 @@ export default function App() {
     }
     return null;
   }, [currentOriginLatLng, geo.position, targetPin]);
+
+  // Calibrate initial shot origin: if a shot was started while GPS accuracy was poor (>15m)
+  // and a high-accuracy fix arrives within 15 seconds while still near the start, snap origin to accurate fix.
+  useEffect(() => {
+    if (!geo.position || !geo.accuracyMeters || geo.accuracyMeters > 10) return;
+    const curHoleNum = round.currentHole;
+    const holeScore = round.scores[curHoleNum];
+    if (!holeScore || holeScore.shots.length === 0) return;
+    const lastShot = holeScore.shots[holeScore.shots.length - 1];
+    if (lastShot && !lastShot.endLatLng && lastShot.startLatLng) {
+      const elapsedSec = (Date.now() - lastShot.timestamp) / 1000;
+      if (elapsedSec < 15) {
+        const drift = computeDistanceYards(lastShot.startLatLng, geo.position);
+        if (drift > 2 && drift < 25) {
+          setRound((prev) => {
+            const h = prev.scores[curHoleNum];
+            if (!h) return prev;
+            return {
+              ...prev,
+              scores: {
+                ...prev.scores,
+                [curHoleNum]: {
+                  ...h,
+                  shots: h.shots.map((s, idx) =>
+                    idx === h.shots.length - 1
+                      ? { ...s, startLatLng: geo.position! }
+                      : s
+                  ),
+                },
+              },
+            };
+          });
+          setPendingStartLatLng(geo.position);
+        }
+      }
+    }
+  }, [geo.position, geo.accuracyMeters, round.currentHole, round.scores]);
 
   const handleSelectLie = useCallback((lie: ShotLie) => {
     setSelectedLie(lie);

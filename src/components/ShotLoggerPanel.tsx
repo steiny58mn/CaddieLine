@@ -426,31 +426,52 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             </button>
           </div>
 
-          {/* Live Shot / Previous Shot readout */}
-          <div className="flex items-center gap-2 text-right">
+        </div>
+
+        {/* Distance Sub-Strip: Current Shot Distance (below strokes counter) & Previous Shot Info (to the right) */}
+        <div className="mt-2 pt-1.5 border-t border-slate-200/60 dark:border-slate-800/60 flex items-center justify-between gap-2">
+          {/* Current Shot Distance (below strokes counter on the left) */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Current:</span>
             {autoDetectedDistanceYards !== null ? (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-bold animate-pulse">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-radar" />
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-black animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-radar" />
                 <span>
                   {formatDistanceValue(autoDetectedDistanceYards, unit)} {suffix}
                 </span>
               </div>
-            ) : previousShot ? (
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[140px] sm:max-w-[180px]">
-                <span className="opacity-75">Last:</span>{' '}
-                <strong className="text-slate-800 dark:text-slate-200 font-bold">
-                  {previousShot.clubShortName}
-                </strong>
-                {previousShot.distanceYards !== null && (
-                  <span className="text-emerald-700 dark:text-emerald-400 font-mono font-semibold">
-                    {' · '}
-                    {formatDistanceValue(previousShot.distanceYards, unit)}
-                    {suffix}
-                  </span>
-                )}
-              </div>
-            ) : null}
+            ) : hasOpenShot ? (
+              <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-bold animate-pulse">
+                Walking...
+              </span>
+            ) : (
+              <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500">
+                --
+              </span>
+            )}
           </div>
+
+          {/* Previous Shot Info (displayed to the right of current distance) */}
+          {previousShot ? (
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[180px] sm:max-w-[220px] text-right">
+              <span className="opacity-75">Last:</span>{' '}
+              <strong className="text-slate-800 dark:text-slate-200 font-bold">
+                {previousShot.clubShortName}
+              </strong>
+              {previousShot.distanceYards !== null ? (
+                <span className="text-emerald-700 dark:text-emerald-400 font-mono font-semibold">
+                  {' · '}
+                  {formatDistanceValue(previousShot.distanceYards, unit)} {suffix}
+                </span>
+              ) : previousShot.isPutt ? (
+                <span className="text-teal-600 dark:text-teal-400 font-semibold"> · Putt</span>
+              ) : null}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono text-right">
+              Last: none
+            </div>
+          )}
         </div>
 
         {/* Hole Dropdown Picker Grid */}
