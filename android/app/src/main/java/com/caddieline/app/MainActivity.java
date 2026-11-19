@@ -1,8 +1,10 @@
 package com.caddieline.app;
 
 import android.app.KeyguardManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -19,6 +21,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.MotionEvent;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 
 import com.getcapacitor.BridgeActivity;
 
@@ -28,6 +31,11 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
 
     private NfcAdapter nfcAdapter;
     private PowerManager.WakeLock wakeLock;
+
+    // Feedback configuration from React UI
+    private volatile boolean vibrateEnabled = true;
+    private volatile boolean soundEnabled = true;
+    private volatile boolean screenWasPoweredOff = false;
 
     // Pocket detection & screen dimming
     private SensorManager sensorManager;
@@ -54,6 +62,21 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         public void onAccuracyChanged(Sensor sensor, int accuracy) {}
     };
 
+    private final BroadcastReceiver screenStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
+            if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                screenWasPoweredOff = true;
+                dispatchPhoneLockedNotice(true);
+            } else if (Intent.ACTION_USER_PRESENT.equals(action)) {
+                screenWasPoweredOff = false;
+                dispatchPhoneLockedNotice(false);
+            }
+        }
+    };
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -77,6 +100,13 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         androidx.core.view.ViewCompat.requestApplyInsets(decorView);
 
         configureShowWhenLocked();
+        setupFeedbackBridge();
+
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        filter.addAction(Intent.ACTION_USER_PRESENT);
+        registerReceiver(screenStateReceiver, filter);
+
         initNfc();
         initPocketDetection();
         handleIntent(getIntent());
@@ -88,11 +118,41 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         configureShowWhenLocked();
         enableNfcReaderMode();
         registerPocketDetection();
+
+        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        boolean isLocked = km != null && (km.isKeyguardLocked() || km.isDeviceLocked());
+        if (isLocked) {
+            dispatchPhoneLockedNotice(true);
+        } else {
+            screenWasPoweredOff = false;
+            dispatchPhoneLockedNotice(false);
+        }
     }
 
     @Override
     public void onPause() {
         super.onPause();
+        if (isFinishing()) {
+            disableNfcReaderMode();
+            unregisterPocketDetection();
+        }
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        if (isFinishing()) {
+            disableNfcReaderMode();
+            unregisterPocketDetection();
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        try {
+            unregisterReceiver(screenStateReceiver);
+        } catch (Exception ignored) {}
         disableNfcReaderMode();
         unregisterPocketDetection();
     }
@@ -104,6 +164,53 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
             return true;
         }
         return super.dispatchTouchEvent(ev);
+    }
+
+    private void setupFeedbackBridge() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new Object() {
+                    @JavascriptInterface
+                    public void updateFeedbackSettings(boolean vibrate, boolean sound) {
+                        vibrateEnabled = vibrate;
+                        soundEnabled = sound;
+                    }
+
+                    @JavascriptInterface
+                    public void requestDeviceUnlock() {
+                        runOnUiThread(() -> {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                                KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                                if (km != null) {
+                                    km.requestDismissKeyguard(MainActivity.this, new KeyguardManager.KeyguardDismissCallback() {
+                                        @Override
+                                        public void onDismissSucceeded() {
+                                            super.onDismissSucceeded();
+                                            screenWasPoweredOff = false;
+                                            dispatchPhoneLockedNotice(false);
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }, "NativeFeedback");
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void dispatchPhoneLockedNotice(boolean locked) {
+        runOnUiThread(() -> {
+            try {
+                String script = String.format(
+                    "window.dispatchEvent(new CustomEvent('phoneLockedNotice', { detail: { locked: %b } }));",
+                    locked
+                );
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(script, null);
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private void initPocketDetection() {
@@ -171,21 +278,18 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     }
 
     /**
-     * Wakes the display and shows CaddieLine directly over the lock screen
-     * without requiring PIN/fingerprint unlock.
+     * Shows CaddieLine directly over the lock screen without prompting for PIN/password.
+     * Note: We deliberately do NOT call KeyguardManager.requestDismissKeyguard(), because
+     * dismissing the keyguard forces Android to present the user's PIN/pattern input screen.
      */
     private void configureShowWhenLocked() {
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
-            KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-            if (km != null) {
-                km.requestDismissKeyguard(this, null);
-            }
         } else {
             getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             );
@@ -218,15 +322,14 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     private void enableNfcReaderMode() {
         if (nfcAdapter != null && nfcAdapter.isEnabled()) {
             Bundle options = new Bundle();
-            options.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 200);
+            options.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 100);
             nfcAdapter.enableReaderMode(
                 this,
                 this,
                 NfcAdapter.FLAG_READER_NFC_A |
                 NfcAdapter.FLAG_READER_NFC_B |
                 NfcAdapter.FLAG_READER_NFC_F |
-                NfcAdapter.FLAG_READER_NFC_V |
-                NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS,
+                NfcAdapter.FLAG_READER_NFC_V,
                 options
             );
         }
@@ -263,8 +366,11 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         final String tagId = bytesToHex(idBytes);
         final String ndefText = readNdefText(tag);
 
-        // Haptic pulse confirming tag read
+        // Haptic pulse confirming tag read (if enabled)
         vibratePhone();
+
+        // Audio confirmation tone (if enabled)
+        playScanSound();
 
         // Wake screen & show over lock screen
         wakeDeviceUp();
@@ -310,15 +416,29 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     }
 
     private void vibratePhone() {
+        if (!vibrateEnabled) return;
         try {
             Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
             if (v != null && v.hasVibrator()) {
+                long[] timings = new long[]{0, 220, 70, 320};
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    v.vibrate(VibrationEffect.createWaveform(new long[]{0, 90, 60, 90}, -1));
+                    int[] amplitudes = new int[]{0, 255, 0, 255};
+                    v.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1));
                 } else {
-                    v.vibrate(new long[]{0, 90, 60, 90}, -1);
+                    v.vibrate(timings, -1);
                 }
             }
+        } catch (Exception ignored) {}
+    }
+
+    private void playScanSound() {
+        if (!soundEnabled) return;
+        try {
+            android.media.ToneGenerator tg = new android.media.ToneGenerator(
+                android.media.AudioManager.STREAM_NOTIFICATION,
+                100
+            );
+            tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 220);
         } catch (Exception ignored) {}
     }
 

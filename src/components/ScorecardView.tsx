@@ -348,7 +348,7 @@ export const ScorecardView: React.FC<ScorecardViewProps> = ({
                 : ''}
             </div>
             <h2 className="font-display text-xl sm:text-3xl font-bold text-[#0F1A14] dark:text-slate-100 mt-0.5 truncate max-w-[70vw] sm:max-w-none">
-              Official Round Scorecard
+              Scorecard
             </h2>
           </div>
 

@@ -23,6 +23,10 @@ interface BagNfcViewProps {
   onAddClub: (club: Club) => void;
   onAddMultipleClubs?: (clubs: Club[]) => void;
   onDeleteClub: (clubId: string) => void;
+  nfcVibrateEnabled?: boolean;
+  onToggleNfcVibrate?: (enabled: boolean) => void;
+  nfcSoundEnabled?: boolean;
+  onToggleNfcSound?: (enabled: boolean) => void;
   onSimulateTagTap?: (tagId: string) => void;
 }
 
@@ -45,6 +49,10 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
   onAddClub,
   onAddMultipleClubs,
   onDeleteClub,
+  nfcVibrateEnabled = true,
+  onToggleNfcVibrate,
+  nfcSoundEnabled = true,
+  onToggleNfcSound,
 }) => {
   const [newClubName, setNewClubName] = useState('');
   const [newClubAbbr, setNewClubAbbr] = useState('');
@@ -253,7 +261,7 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
           </div>
         )}
 
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-3">
           <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -265,6 +273,32 @@ export const BagNfcView: React.FC<BagNfcViewProps> = ({
               Auto-log previous shot when a new club NFC tag is scanned (records GPS carry distance)
             </span>
           </label>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4 pt-1 border-t border-slate-100/80 dark:border-slate-800/80">
+            <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={nfcVibrateEnabled}
+                onChange={(e) => onToggleNfcVibrate?.(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
+              />
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                Haptic vibration on tag scan
+              </span>
+            </label>
+
+            <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={nfcSoundEnabled}
+                onChange={(e) => onToggleNfcSound?.(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
+              />
+              <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                Audio chime on tag scan
+              </span>
+            </label>
+          </div>
         </div>
       </div>
 

@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpToLine,
   Ban,
   CheckCircle2,
   ChevronDown,
@@ -9,6 +12,7 @@ import {
   Edit3,
   Flag,
   History,
+  LockOpen,
   Play,
   Radio,
   RotateCcw,
@@ -40,7 +44,9 @@ import {
   getHolePenalties,
   getHoleStrokes,
   getLieMeta,
+  recommendClub,
   getScoreLabel,
+  isPenaltyShot,
   isShotPutt,
   unitSuffix,
 } from '../utils/golfMath';
@@ -79,6 +85,8 @@ interface ShotLoggerPanelProps {
   onUpdateShot?: (shotId: string, updates: Partial<ShotRecord>) => void;
   onAddPenalty: () => void;
   onTrackShot: (chosenClubId?: string) => void;
+  showPhoneLockedNotice?: boolean;
+  onRequestDeviceUnlock?: () => void;
 }
 
 const PutterIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -265,6 +273,8 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   onUpdateShot,
   onAddPenalty,
   onTrackShot,
+  showPhoneLockedNotice,
+  onRequestDeviceUnlock,
 }) => {
   const [isHolePickerOpen, setIsHolePickerOpen] = useState(false);
   const [isTrackClubModalOpen, setIsTrackClubModalOpen] = useState(false);
@@ -278,9 +288,13 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
   const suffix = unitSuffix(unit);
   const { isInstalled } = usePWAInstall();
 
-  const lastShot = holeScore.shots[holeScore.shots.length - 1];
-  const hasOpenShot = Boolean(lastShot && !lastShot.endLatLng);
-  const canUndo = holeScore.shots.length > 0 || holeScore.manualPutts > 0;
+  const lastNonPenShot = useMemo(() => {
+    const nonPens = (holeScore.shots || []).filter((s) => !isPenaltyShot(s));
+    return nonPens.length > 0 ? nonPens[nonPens.length - 1] : null;
+  }, [holeScore.shots]);
+  const hasOpenShot = Boolean(lastNonPenShot && !lastNonPenShot.endLatLng);
+  // Deleting current shot ignores penalty strokes; deleting penalties requires going to the log
+  const canUndo = holeScore.shots.some((s) => !isPenaltyShot(s)) || holeScore.manualPutts > 0;
 
   const lastShotDistance = useMemo(() => {
     if (!previousShot) return null;
@@ -307,6 +321,10 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
 
     return { front, center, back };
   }, [playerPosition, holeData.teeLatLng, holeData.greenCenterLatLng, holeData.greenFrontLatLng, holeData.greenBackLatLng, holeData.yardage]);
+
+  const suggestedClub = useMemo(() => {
+    return recommendClub(greenDistances.center, bag);
+  }, [greenDistances.center, bag]);
 
   // Par styling badge
   const parBadgeColor =
@@ -503,24 +521,61 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
         )}
       </div>
 
+      {/* Phone Locked NFC Warning Pill (Title text only + Unlock Button) */}
+      {showPhoneLockedNotice && (
+        <div className="shrink-0 px-2.5 sm:px-3 pt-2">
+          <div className="rounded-xl bg-amber-50 dark:bg-amber-950/70 border border-amber-300 dark:border-amber-700/80 px-3 py-2 flex items-center justify-between gap-2 shadow-2xs animate-in fade-in duration-150">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span className="text-xs font-bold text-amber-950 dark:text-amber-200 truncate">
+                NFC Scanning Paused (Phone Locked)
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onRequestDeviceUnlock && (
+                <button
+                  type="button"
+                  onClick={onRequestDeviceUnlock}
+                  className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all active:scale-95 shadow-2xs flex items-center gap-1"
+                >
+                  <LockOpen className="w-3.5 h-3.5" />
+                  <span>Unlock</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 2. Green Range Distance to Pin & Green Display (Above Track Shots) */}
       <div className="shrink-0 px-2.5 sm:px-3 pt-2">
         <div className="rounded-2xl bg-gradient-to-b from-white to-slate-50/90 dark:from-[#0d1810] dark:to-[#09120c] border border-slate-200/90 dark:border-slate-800/90 p-2.5 sm:p-3 flex flex-col justify-between shadow-2xs">
           <div className="flex items-center justify-between text-slate-400 dark:text-slate-500 text-[10px] sm:text-[11px] font-bold tracking-wider uppercase shrink-0">
-            <span className="flex items-center gap-1">
-              <Crosshair className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <span>Green Range</span>
+            <span className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
+              <Crosshair className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>Yards</span>
             </span>
-            <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">
-              {unit === 'meters' ? 'Meters' : 'Yards'}
+
+            {/* Recommended Club centered */}
+            {suggestedClub && (
+              <span className="font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <span className="text-[10px] text-slate-400 font-sans font-medium uppercase">Rec:</span>
+                <span>{suggestedClub.name}</span>
+              </span>
+            )}
+
+            {/* Right side icon */}
+            <span className="w-4 h-4 flex items-center justify-end">
+              <Flag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
             </span>
           </div>
 
           <div className="flex items-center justify-between gap-2 py-1">
             {/* Front of Green (Left, smaller font) */}
             <div className="flex-1 text-center min-w-0">
-              <div className="text-[10px] sm:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                Front
+              <div className="text-[10px] sm:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-center gap-1">
+                <ArrowDownToLine className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>Front</span>
               </div>
               <div className="text-lg sm:text-2xl font-black font-mono text-slate-700 dark:text-slate-300 tabular-nums mt-0.5">
                 {greenDistances.front !== null
@@ -551,8 +606,9 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
 
             {/* Back of Green (Right, smaller font) */}
             <div className="flex-1 text-center min-w-0">
-              <div className="text-[10px] sm:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                Back
+              <div className="text-[10px] sm:text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center justify-center gap-1">
+                <ArrowUpToLine className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>Back</span>
               </div>
               <div className="text-lg sm:text-2xl font-black font-mono text-slate-700 dark:text-slate-300 tabular-nums mt-0.5">
                 {greenDistances.back !== null
@@ -567,12 +623,12 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
       {/* 3. Track Shot Action Row */}
       <div className="shrink-0 px-2.5 sm:px-3 pt-2">
         <div className="flex items-center gap-1.5 w-full">
-          {/* Flight Direction Icons */}
-          <div className="flex items-center gap-0.5 shrink-0" role="group" aria-label="Shot direction">
+          {/* Flight Direction Icons - Wider buttons for easy thumb tapping */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0" role="group" aria-label="Shot direction">
             <button
               type="button"
               onClick={() => onSelectDirection('left')}
-              className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+              className={`h-11 w-11 sm:w-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                 selectedDirection === 'left'
                   ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                   : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -586,7 +642,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             <button
               type="button"
               onClick={() => onSelectDirection('straight')}
-              className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+              className={`h-11 w-11 sm:w-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                 selectedDirection === 'straight'
                   ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                   : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -600,7 +656,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             <button
               type="button"
               onClick={() => onSelectDirection('right')}
-              className={`h-11 w-8 sm:w-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
+              className={`h-11 w-11 sm:w-12 rounded-xl border flex items-center justify-center transition-all active:scale-95 ${
                 selectedDirection === 'right'
                   ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-xs'
                   : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -682,7 +738,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
             <span className="truncate text-xs">
               {previousShot ? (
                 <>
-                  <span className="opacity-75">Last:</span>{' '}
+                  <span className="text-emerald-600 dark:text-emerald-400 font-black mr-1">P:</span>
                   <strong className="text-slate-900 dark:text-slate-100 font-bold">
                     {previousShot.clubName}
                   </strong>
@@ -696,7 +752,9 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                   ) : null}
                 </>
               ) : (
-                <span className="opacity-75">Last: —</span>
+                <span className="opacity-75">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-black mr-1">P:</span>—
+                </span>
               )}
             </span>
           </div>
@@ -704,10 +762,11 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           {/* Right Side: Current Club / Tracking Status */}
           <div className="flex items-center gap-1.5 shrink-0 text-right">
             {hasOpenShot ? (
-              <div className="inline-flex items-center gap-1.5">
-                <Radio className="w-3 h-3 text-emerald-600 dark:text-emerald-400 animate-pulse" />
+              <div className="inline-flex items-center gap-1">
+                <Radio className="w-3 h-3 text-emerald-600 dark:text-emerald-400 animate-pulse shrink-0" />
+                <span className="text-emerald-600 dark:text-emerald-400 font-black">C:</span>
                 <span className="font-extrabold text-[#0F1A14] dark:text-slate-100">
-                  Tracking {lastShot.clubName}
+                  {lastNonPenShot?.clubName ?? "Shot"}
                 </span>
                 <span className="font-mono font-black text-emerald-700 dark:text-emerald-300 tabular-nums">
                   {autoDetectedDistanceYards !== null
@@ -716,9 +775,12 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 </span>
               </div>
             ) : (
-              <span className="text-[11px] font-mono text-emerald-800 dark:text-emerald-300 opacity-90">
-                Ready to track
-              </span>
+              <div className="inline-flex items-center gap-1 text-xs">
+                <span className="text-emerald-600 dark:text-emerald-400 font-black">C:</span>
+                <span className="font-mono text-emerald-800 dark:text-emerald-300 opacity-90">
+                  Ready
+                </span>
+              </div>
             )}
           </div>
         </div>
@@ -729,44 +791,32 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
         <div className="flex items-center justify-between gap-1.5 min-h-[44px]">
           {/* Left Group: Strokes + Putts + Penalties */}
           <div className="flex items-center gap-1.5 min-w-0 flex-nowrap">
-            <div className="h-11 px-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-1.5 shadow-2xs shrink-0">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Strokes:</span>
-              <span className="font-mono font-black text-sm sm:text-base text-[#0F1A14] dark:text-white">
-                {holeStrokes || 0}
-              </span>
-              {holeStrokes > 0 && (
-                <span
-                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                    holeStrokes - holeData.par < 0
-                      ? 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
-                      : holeStrokes - holeData.par === 0
-                        ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                        : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300'
-                  }`}
-                >
-                  {getScoreLabel(holeStrokes, holeData.par)}
-                </span>
-              )}
+            <div
+              className="h-11 w-[52px] min-w-[52px] px-2 rounded-xl bg-sky-50/80 dark:bg-sky-950/40 border border-sky-200/80 dark:border-sky-800/60 flex items-center justify-center gap-1.5 text-sky-800 dark:text-sky-300 shadow-2xs shrink-0"
+              title="Total Strokes on Hole"
+            >
+              <Flag className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+              <span className="text-xs font-mono font-bold tabular-nums">{holeStrokes || 0}</span>
             </div>
 
-            <div className="h-11 px-3 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/50 flex items-center gap-1.5 text-teal-800 dark:text-teal-300 shadow-2xs shrink-0">
-              <PutterIcon className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-              <span className="text-xs font-mono font-bold">{puttsCount}</span>
+            <div
+              className="h-11 w-[52px] min-w-[52px] px-2 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/50 flex items-center justify-center gap-1.5 text-teal-800 dark:text-teal-300 shadow-2xs shrink-0"
+              title="Putts on Green"
+            >
+              <PutterIcon className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+              <span className="text-xs font-mono font-bold tabular-nums">{puttsCount}</span>
             </div>
 
             {/* Quick +1 Penalty Button */}
             <button
               type="button"
               onClick={onAddPenalty}
-              className={`h-11 px-3 rounded-xl border flex items-center gap-1.5 text-xs font-mono font-bold transition-all active:scale-95 shadow-2xs ${
-                penaltiesCount > 0
-                  ? 'bg-rose-50/80 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/60 text-rose-700 dark:text-rose-300'
-                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-rose-600 hover:border-rose-300'
-              }`}
-              title="Add 1 Penalty Stroke"
+              className="h-11 w-[52px] min-w-[52px] px-2 rounded-xl bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-800/60 flex items-center justify-center gap-1.5 text-rose-800 dark:text-rose-300 shadow-2xs shrink-0 transition-all active:scale-95"
+              title={penaltiesCount > 0 ? `Penalty Strokes: ${penaltiesCount} (Tap to add)` : 'Add Penalty Stroke'}
+              aria-label={penaltiesCount > 0 ? `Add penalty stroke, current count ${penaltiesCount}` : 'Add Penalty Stroke'}
             >
-              <Ban className="w-4 h-4 text-rose-500" />
-              <span>{penaltiesCount > 0 ? `+${penaltiesCount} Pen` : '+Pen'}</span>
+              <Ban className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+              <span className="text-xs font-mono font-bold tabular-nums">{penaltiesCount}</span>
             </button>
           </div>
 
@@ -774,12 +824,12 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
           <button
             type="button"
             onClick={() => setIsShotLogOpen(true)}
-            className="h-11 px-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-1.5 text-xs font-bold transition-all active:scale-95 shadow-2xs shrink-0"
+            className="h-11 w-[68px] min-w-[68px] px-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center gap-1 text-xs font-bold transition-all active:scale-95 shadow-2xs shrink-0"
             title={`View Hole ${holeData.holeNumber} Shot Log (${holeScore.shots.length})`}
           >
-            <History className="w-4 h-4 text-slate-500 shrink-0" />
+            <History className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <span>Log</span>
-            <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold">
+            <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold min-w-[18px] text-center">
               {holeScore.shots.length}
             </span>
           </button>
@@ -850,56 +900,74 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100 dark:divide-slate-800/80 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50/50 dark:bg-slate-900/50">
-                  {holeScore.shots.map((shot: ShotRecord, idx) => {
-                    const lieMeta = getLieMeta(shot.lie);
-                    const isActiveOpenShot =
-                      idx === holeScore.shots.length - 1 && !shot.endLatLng;
+                  {(() => {
+                    const regularShots = holeScore.shots.filter((s) => !isPenaltyShot(s));
+                    const penaltyShots = holeScore.shots.filter((s) => isPenaltyShot(s));
+                    const sortedLogShots = [...regularShots, ...penaltyShots];
+
+                    return sortedLogShots.map((shot: ShotRecord) => {
+                      const isPen = isPenaltyShot(shot);
+                      const lieMeta = getLieMeta(shot.lie);
+                      const isActiveOpenShot =
+                        !isPen && shot.id === lastNonPenShot?.id && !shot.endLatLng;
                     const isPutt = isShotPutt(shot);
                     const displayDistance =
-                      shot.distanceYards !== null
-                        ? `${formatDistanceValue(shot.distanceYards, unit)} ${suffix}`
-                        : isPutt
-                          ? 'Green'
-                          : isActiveOpenShot && autoDetectedDistanceYards !== null
-                            ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live)`
-                            : isActiveOpenShot
-                              ? 'Tracking GPS'
-                              : 'GPS waiting';
+                      isPen
+                        ? '+1 Penalty Stroke'
+                        : shot.distanceYards !== null
+                          ? `${formatDistanceValue(shot.distanceYards, unit)} ${suffix}`
+                          : isPutt
+                            ? 'Green'
+                            : isActiveOpenShot && autoDetectedDistanceYards !== null
+                              ? `${formatDistanceValue(autoDetectedDistanceYards, unit)} ${suffix} (live)`
+                              : isActiveOpenShot
+                                ? 'Tracking GPS'
+                                : 'GPS waiting';
 
                     return (
                       <div
                         key={shot.id}
                         className={`px-3 py-2.5 flex items-center justify-between gap-2 transition-colors ${
-                          isActiveOpenShot
-                            ? 'bg-emerald-50/70 dark:bg-emerald-950/40'
-                            : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/60'
+                          isPen
+                            ? 'bg-rose-50/70 dark:bg-rose-950/30'
+                            : isActiveOpenShot
+                              ? 'bg-emerald-50/70 dark:bg-emerald-950/40'
+                              : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/60'
                         }`}
                       >
                         <div
                           className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
-                          onClick={() => setEditingShot(shot)}
+                          onClick={() => !isPen && setEditingShot(shot)}
                           role="button"
                           tabIndex={0}
-                          title="Click to edit shot details"
+                          title={isPen ? 'Penalty Stroke' : 'Click to edit shot details'}
                         >
                           <span
-                            className="w-7 h-7 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0 shadow-xs"
-                            style={{ backgroundColor: lieMeta.dotColor }}
+                            className={`w-7 h-7 rounded-full text-white text-xs font-black flex items-center justify-center shrink-0 shadow-xs ${
+                              isPen ? 'bg-rose-600' : ''
+                            }`}
+                            style={isPen ? undefined : { backgroundColor: lieMeta.dotColor }}
                           >
-                            {shot.strokeNumber}
+                            {isPen ? 'P' : shot.strokeNumber}
                           </span>
                           <div className="min-w-0">
                             <div className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate flex items-center gap-1.5">
-                              <span>{shot.clubName}</span>
+                              <span className={isPen ? 'text-rose-700 dark:text-rose-300 font-extrabold' : ''}>
+                                {shot.clubName}
+                              </span>
                               <span className="text-slate-400 font-normal">·</span>
                               <span
                                 className="font-semibold text-xs px-1.5 py-0.2 rounded"
-                                style={{
-                                  backgroundColor: `${lieMeta.dotColor}18`,
-                                  color: lieMeta.dotColor,
-                                }}
+                                style={
+                                  isPen
+                                    ? { backgroundColor: '#ffe4e6', color: '#be123c' }
+                                    : {
+                                        backgroundColor: `${lieMeta.dotColor}18`,
+                                        color: lieMeta.dotColor,
+                                      }
+                                }
                               >
-                                {isActiveOpenShot ? 'In Progress' : lieMeta.label}
+                                {isPen ? '+1 Penalty' : isActiveOpenShot ? 'In Progress' : lieMeta.label}
                               </span>
                               {isPutt && (
                                 <span className="text-[10px] font-bold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/60 px-1 rounded">
@@ -909,39 +977,46 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
                               {displayDistance}
-                              {' · '}
-                              {shot.direction === 'straight'
-                                ? 'Straight'
-                                : shot.direction.charAt(0).toUpperCase() + shot.direction.slice(1)}
-                              {shot.source === 'nfc' ? ' · NFC' : ''}
-                              {shot.penaltyStrokes > 0 ? ` · +${shot.penaltyStrokes} Pen` : ''}
+                              {!isPen && (
+                                <>
+                                  {' · '}
+                                  {shot.direction === 'straight'
+                                    ? 'Straight'
+                                    : shot.direction.charAt(0).toUpperCase() + shot.direction.slice(1)}
+                                  {shot.source === 'nfc' ? ' · NFC' : ''}
+                                  {shot.penaltyStrokes > 0 ? ` · +${shot.penaltyStrokes} Pen` : ''}
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setEditingShot(shot)}
-                            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                            aria-label={`Edit shot ${shot.strokeNumber}`}
-                            title="Edit shot"
-                          >
-                            <Edit3 className="w-4 h-4" />
-                          </button>
+                          {!isPen && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingShot(shot)}
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                              aria-label={`Edit shot ${shot.strokeNumber}`}
+                              title="Edit shot"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => onDeleteShot(shot.id)}
                             className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
-                            aria-label={`Delete shot ${shot.strokeNumber}`}
-                            title="Delete shot"
+                            aria-label={`Delete ${isPen ? 'penalty' : `shot ${shot.strokeNumber}`}`}
+                            title={isPen ? 'Delete penalty' : 'Delete shot'}
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
                     );
-                  })}
+                  });
+                })()}
                 </div>
               )}
             </div>

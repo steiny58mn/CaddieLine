@@ -29,6 +29,9 @@ declare global {
       isNativePlatform?: () => boolean;
       getPlatform?: () => string;
     };
+    NativeFeedback?: {
+      updateFeedbackSettings?: (vibrate: boolean, sound: boolean) => void;
+    };
   }
 }
 
@@ -41,7 +44,76 @@ export interface NfcTapPayload {
 
 export type NfcStatus = 'unsupported' | 'idle' | 'scanning' | 'error';
 
-export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
+export function triggerNfcHaptics() {
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      // Powerful double-burst haptic: 220ms, 70ms pause, 320ms strong pulse
+      navigator.vibrate([220, 70, 320]);
+    } catch {}
+  }
+}
+
+export function playNfcChime() {
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    const now = ctx.currentTime;
+
+    // Tone 1: 587.33 Hz (D5)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    gain1.gain.setValueAtTime(0, now);
+    gain1.gain.linearRampToValueAtTime(0.4, now + 0.02);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.12);
+
+    // Tone 2: 880 Hz (A5)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(880, now + 0.1);
+    gain2.gain.setValueAtTime(0, now + 0.1);
+    gain2.gain.linearRampToValueAtTime(0.5, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.1);
+    osc2.stop(now + 0.38);
+  } catch {}
+}
+
+export interface UseWebNfcOptions {
+  vibrate?: boolean;
+  sound?: boolean;
+}
+
+export function useWebNfc(
+  onTagTap: (payload: NfcTapPayload) => void,
+  options: UseWebNfcOptions = {}
+) {
+  const { vibrate = true, sound = true } = options;
+  const vibrateRef = useRef(vibrate);
+  const soundRef = useRef(sound);
+
+  useEffect(() => {
+    vibrateRef.current = vibrate;
+    soundRef.current = sound;
+    try {
+      window.NativeFeedback?.updateFeedbackSettings?.(vibrate, sound);
+    } catch {}
+  }, [vibrate, sound]);
+
   const isCapacitorNative =
     typeof window !== 'undefined' &&
     Boolean(
@@ -80,6 +152,12 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
         source: 'hardware',
         timestamp: Date.now(),
       };
+      if (vibrateRef.current) {
+        triggerNfcHaptics();
+      }
+      if (soundRef.current) {
+        playNfcChime();
+      }
       setLastTap(payload);
       callbackRef.current(payload);
     };
@@ -156,10 +234,12 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
           timestamp: Date.now(),
         };
 
-        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-          navigator.vibrate?.([40, 30, 40]);
+        if (vibrateRef.current) {
+          triggerNfcHaptics();
         }
-
+        if (soundRef.current) {
+          playNfcChime();
+        }
         setLastTap(payload);
         callbackRef.current(payload);
       };
@@ -191,8 +271,11 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
       source: 'simulated',
       timestamp: Date.now(),
     };
-    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-      navigator.vibrate?.(35);
+    if (vibrateRef.current) {
+      triggerNfcHaptics();
+    }
+    if (soundRef.current) {
+      playNfcChime();
     }
     setLastTap(payload);
     callbackRef.current(payload);
@@ -205,6 +288,29 @@ export function useWebNfc(onTagTap: (payload: NfcTapPayload) => void) {
       }
     };
   }, []);
+
+  // Auto-start scanning on mount and ensure continuous scanning
+  useEffect(() => {
+    if (isSupported && status === 'idle') {
+      void startScan();
+    }
+  }, [isSupported, status, startScan]);
+
+  // Keep NFC active when app re-enters foreground or screen turns on
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleReactivation = () => {
+      if (document.visibilityState === 'visible' && isSupported && status !== 'scanning') {
+        void startScan();
+      }
+    };
+    document.addEventListener('visibilitychange', handleReactivation);
+    window.addEventListener('focus', handleReactivation);
+    return () => {
+      document.removeEventListener('visibilitychange', handleReactivation);
+      window.removeEventListener('focus', handleReactivation);
+    };
+  }, [isSupported, status, startScan]);
 
   return {
     isSupported,

@@ -18,7 +18,7 @@ import {
   pointToPolylineMinDistanceMeters,
 } from '../utils/golfMath';
 
-const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v11_';
+const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v12_';
 const METERS_TO_YARDS = 1.0936133;
 
 interface OverpassPoint {
@@ -624,27 +624,65 @@ function matchFeaturesToHoles(
   fairways: OsmPolygonFeature[];
   tees: OsmPolygonFeature[];
 } {
-  const clonedHoles = holes.map((h) => ({ ...h }));
+  const clonedHoles = holes.map((h) => ({ ...h, path: [...h.path] }));
   const clonedGreens = greens.map((g) => ({ ...g }));
   const clonedBunkers = bunkers.map((b) => ({ ...b }));
   const clonedWaters = waters.map((w) => ({ ...w }));
+  const clonedTees = tees.map((t) => ({ ...t }));
 
-  for (const green of clonedGreens) {
-    let bestHole: OsmHoleFeature | null = null;
-    let bestDist = 75;
-    for (const h of clonedHoles) {
-      const refPt = h.greenCenterLatLng ?? h.path[h.path.length - 1];
-      if (!refPt) continue;
-      const d = computeDistanceMeters(green.center, refPt);
-      if (d < bestDist) {
-        bestDist = d;
-        bestHole = h;
+  for (const h of clonedHoles) {
+    // 1. Correlate green to hole (match by explicit holeNumber first, then distance fallback)
+    let matchedGreen = clonedGreens.find((g) => g.holeNumber === h.holeNumber);
+    if (!matchedGreen && h.path.length > 0) {
+      let bestDist = 85;
+      for (const g of clonedGreens) {
+        const dEnd = computeDistanceMeters(g.center, h.path[h.path.length - 1]);
+        const dStart = computeDistanceMeters(g.center, h.path[0]);
+        const d = Math.min(dEnd, dStart);
+        if (d < bestDist) {
+          bestDist = d;
+          matchedGreen = g;
+        }
       }
     }
-    if (bestHole) {
-      green.holeNumber = bestHole.holeNumber;
-      green.label = `Hole ${bestHole.holeNumber} Green`;
-      bestHole.greenCenterLatLng = green.center;
+
+    if (matchedGreen) {
+      matchedGreen.holeNumber = h.holeNumber;
+      matchedGreen.label = `Hole ${h.holeNumber} Green`;
+
+      // 2. Orientation check: ensure h.path[0] is at the tee and h.path[last] is at the green
+      if (h.path.length >= 2) {
+        const dStartToGreen = computeDistanceMeters(matchedGreen.center, h.path[0]);
+        const dEndToGreen = computeDistanceMeters(matchedGreen.center, h.path[h.path.length - 1]);
+        if (dStartToGreen < dEndToGreen) {
+          // The OSM way was drawn backwards (from green to tee); reverse it!
+          h.path.reverse();
+          h.teeLatLng = h.path[0];
+        }
+      }
+      h.greenCenterLatLng = matchedGreen.center;
+    }
+
+    // 3. Correlate tee box to hole (match by explicit holeNumber first, then proximity to path start)
+    let matchedTee = clonedTees.find((t) => t.holeNumber === h.holeNumber);
+    if (!matchedTee && h.path.length > 0) {
+      let bestTeeDist = 65;
+      for (const t of clonedTees) {
+        const d = computeDistanceMeters(t.center, h.path[0]);
+        if (d < bestTeeDist) {
+          bestTeeDist = d;
+          matchedTee = t;
+        }
+      }
+    }
+    if (matchedTee) {
+      matchedTee.holeNumber = h.holeNumber;
+      h.teeLatLng = matchedTee.center;
+    }
+
+    // 4. Recompute yardage accurately if tee and green center both exist
+    if (h.teeLatLng && h.greenCenterLatLng && (!h.yardage || h.yardage <= 50)) {
+      h.yardage = computeDistanceYards(h.teeLatLng, h.greenCenterLatLng);
     }
   }
 
@@ -1048,6 +1086,8 @@ export async function fetchCourseGolfGeometry(
         tees.push({ id, kind: 'tee', label: tags.name || 'Tee', holeNumber: holeRef, polygon: [center], center });
       } else if (golfTag === 'green') {
         greens.push({ id, kind: 'green', label: holeRef ? `Hole ${holeRef} Green` : 'Green', holeNumber: holeRef, polygon: [center], center });
+      } else if (golfTag === 'pin') {
+        greens.push({ id, kind: 'green', label: holeRef ? `Hole ${holeRef} Pin` : 'Pin', holeNumber: holeRef, polygon: [center], center });
       }
       continue;
     }
@@ -1238,9 +1278,10 @@ export function applyOsmGeometryToHoles(
   geometry: OsmCourseGeometry
 ): Record<number, HolePinData> {
   const holes: Record<number, HolePinData> = {};
+  const maxHoles = Math.max(18, ...geometry.holes.map((h) => h.holeNumber));
 
-  for (let i = 1; i <= 18; i += 1) {
-    const def = DEFAULT_PAR_LAYOUT[i - 1];
+  for (let i = 1; i <= maxHoles; i += 1) {
+    const def = DEFAULT_PAR_LAYOUT[(i - 1) % 18] ?? { par: 4, handicap: i, yardage: 380 };
     const osmHole = geometry.holes.find((h) => h.holeNumber === i);
     const osmGreen = geometry.greens.find((g) => g.holeNumber === i);
 

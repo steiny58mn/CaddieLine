@@ -40,9 +40,9 @@ export const CLUB_PRESETS: ClubPreset[] = [
   { id: '8i', name: '8 Iron', shortName: '8I', category: 'iron', typicalYards: 145 },
   { id: '9i', name: '9 Iron', shortName: '9I', category: 'iron', typicalYards: 134 },
   { id: 'pw', name: 'Pitching Wedge', shortName: 'PW', category: 'wedge', typicalYards: 122 },
-  { id: 'gw', name: 'Gap Wedge (50°)', shortName: 'GW', category: 'wedge', typicalYards: 108 },
-  { id: 'sw', name: 'Sand Wedge (56°)', shortName: 'SW', category: 'wedge', typicalYards: 92 },
-  { id: 'lw', name: 'Lob Wedge (60°)', shortName: 'LW', category: 'wedge', typicalYards: 74 },
+  { id: 'gw', name: 'Gap Wedge', shortName: 'GW', category: 'wedge', typicalYards: 108 },
+  { id: 'sw', name: 'Sand Wedge', shortName: 'SW', category: 'wedge', typicalYards: 92 },
+  { id: 'lw', name: 'Lob Wedge', shortName: 'LW', category: 'wedge', typicalYards: 74 },
   { id: 'pt', name: 'Putter', shortName: 'PT', category: 'putter', typicalYards: 10 },
 ];
 
@@ -294,6 +294,21 @@ export function computeDistanceMeters(a?: LatLngLiteral | null, b?: LatLngLitera
 
 export function computeDistanceYards(a?: LatLngLiteral | null, b?: LatLngLiteral | null): number {
   return Math.round(computeDistanceMeters(a, b) * METERS_TO_YARDS);
+}
+
+/**
+ * Computes forward azimuth/bearing in degrees clockwise from true North (0° = North, 90° = East, 180° = South, 270° = West)
+ */
+export function computeBearingDegrees(from: LatLngLiteral, to: LatLngLiteral): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const lat1 = toRad(from.lat);
+  const lat2 = toRad(to.lat);
+  const dLng = toRad(to.lng - from.lng);
+
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return (brng + 360) % 360;
 }
 
 export function computePolygonCentroid(polygon: LatLngLiteral[]): LatLngLiteral {
@@ -807,15 +822,24 @@ export function getEffectivePutts(score: HoleScoreState): number {
   return Math.max(loggedPutts, score.manualPutts);
 }
 
+export function isPenaltyShot(shot: { isPenalty?: boolean; clubId?: string; lie?: ShotLie }): boolean {
+  return Boolean(shot.isPenalty || shot.clubId === 'pen' || shot.lie === 'penalty');
+}
+
 export function getHolePenalties(score: HoleScoreState): number {
-  return score.shots.reduce((sum, s) => sum + (s.penaltyStrokes || 0), 0);
+  return score.shots.reduce((sum, s) => sum + (isPenaltyShot(s) ? 1 : (s.penaltyStrokes || 0)), 0);
 }
 
 export function getHoleStrokes(score: HoleScoreState): number {
   if (score.manualScoreOverride !== undefined && score.manualScoreOverride > 0) {
     return score.manualScoreOverride;
   }
-  const shotStrokes = score.shots.reduce((sum, s) => sum + 1 + (s.penaltyStrokes || 0), 0);
+  const shotStrokes = score.shots.reduce((sum, s) => {
+    if (isPenaltyShot(s)) {
+      return sum + 1;
+    }
+    return sum + 1 + (s.penaltyStrokes || 0);
+  }, 0);
   const loggedPutts = getLoggedPuttCount(score);
   const extraPutts = Math.max(0, score.manualPutts - loggedPutts);
   return shotStrokes + extraPutts;

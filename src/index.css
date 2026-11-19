@@ -13,6 +13,8 @@
   body,
   #root {
     height: 100%;
+    overscroll-behavior: none;
+    overscroll-behavior-y: none;
   }
 
   html.dark {

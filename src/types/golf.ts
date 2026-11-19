@@ -15,6 +15,7 @@ export type ShotLie =
   | 'water'
   | 'ob'
   | 'holed'
+  | 'penalty'
   | 'left_rough'
   | 'right_rough'
   | 'left_trees'
@@ -50,6 +51,7 @@ export interface ShotRecord {
   source: 'manual' | 'nfc' | 'map';
   isPutt?: boolean;
   isPuttManualOverride?: boolean;
+  isPenalty?: boolean;
 }
 
 export type HazardPinType = 'bunker' | 'water' | 'dogleg' | 'layup';

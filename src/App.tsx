@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ClipboardList, Flag, Map as MapIcon, Moon, Nfc, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
+import { BarChart3, ClipboardList, Compass, Crosshair, Flag, Layers, Map as MapIcon, Moon, Nfc, RefreshCw, Smartphone, SmartphoneCharging, Sun } from 'lucide-react';
 import {
   AppViewTab,
   Club,
@@ -28,6 +28,7 @@ import {
   getPrevHoleNumber,
   isClubHigherThanPW,
   isHolePlayed,
+  isPenaltyShot,
   isPutterClub,
   isShotPutt,
   isUserAtGolfCourse,
@@ -50,7 +51,7 @@ import {
 } from './services/golfCourseApiService';
 import { useGeolocation } from './hooks/useGeolocation';
 import { NfcTapPayload, useWebNfc } from './hooks/useWebNfc';
-import { OpenGolfHoleMap } from './components/OpenGolfHoleMap';
+import { OpenGolfHoleMap, OpenGolfHoleMapHandle } from './components/OpenGolfHoleMap';
 import { ShotLoggerPanel } from './components/ShotLoggerPanel';
 import { ScorecardView } from './components/ScorecardView';
 import { StatsView } from './components/StatsView';
@@ -65,6 +66,8 @@ const STORAGE_KEYS = {
   SAVED_ROUNDS: 'caddieline_saved_rounds_v1',
   BAG: 'caddieline_club_bag_v2',
   AUTO_NFC: 'caddieline_auto_nfc_v1',
+  NFC_VIBRATE: 'caddieline_nfc_vibrate_v1',
+  NFC_SOUND: 'caddieline_nfc_sound_v1',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -120,17 +123,28 @@ export default function App() {
     const loaded = loadFromStorage(STORAGE_KEYS.BAG, DEFAULT_CLUB_BAG);
     // Sanitize any corrupt values (> 999 yards) from prior testing and ensure automatic canonical ordering
     const sanitized = loaded.map((c: Club) => {
-      if (typeof c.typicalYards !== 'number' || isNaN(c.typicalYards) || c.typicalYards > 999) {
-        const preset = CLUB_PRESETS.find((p) => p.id === c.id);
-        return { ...c, typicalYards: preset?.typicalYards ?? 150 };
+      let name = c.name;
+      if (name && name.includes('(') && (name.includes('°') || name.toLowerCase().includes('deg'))) {
+        name = name.replace(/\s*\([^)]*°[^)]*\)/g, '').replace(/\s*\([^)]*deg[^)]*\)/gi, '').trim();
       }
-      return c;
+      const preset = CLUB_PRESETS.find((p) => p.id === c.id);
+      if (typeof c.typicalYards !== 'number' || isNaN(c.typicalYards) || c.typicalYards > 999) {
+        return { ...c, name: name || preset?.name || c.name, typicalYards: preset?.typicalYards ?? 150 };
+      }
+      return { ...c, name: name || c.name };
     });
     return sortGolfClubs(sanitized);
   });
   const [autoLogOnNfc, setAutoLogOnNfc] = useState<boolean>(() =>
     loadFromStorage(STORAGE_KEYS.AUTO_NFC, true)
   );
+  const [nfcVibrate, setNfcVibrate] = useState<boolean>(() =>
+    loadFromStorage(STORAGE_KEYS.NFC_VIBRATE, true)
+  );
+  const [nfcSound, setNfcSound] = useState<boolean>(() =>
+    loadFromStorage(STORAGE_KEYS.NFC_SOUND, true)
+  );
+  const [showPhoneLockedNotice, setShowPhoneLockedNotice] = useState<boolean>(false);
 
   // OpenStreetMap course geometry state (greens, bunkers, water hazards, holes)
   const [courseGeometry, setCourseGeometry] = useState<OsmCourseGeometry | null>(() => {
@@ -152,6 +166,8 @@ export default function App() {
   const [pendingStartLatLng, setPendingStartLatLng] = useState<LatLngLiteral | null>(null);
 
   // Map interaction state
+  const mapHandleRef = useRef<OpenGolfHoleMapHandle>(null);
+  const [mapBaseLayer, setMapBaseLayer] = useState<'satellite' | 'osm'>('satellite');
   const [tapMode, setTapMode] = useState<MapTapMode>('measure');
   const [targetPin, setTargetPin] = useState<LatLngLiteral | null>(null);
 
@@ -197,7 +213,8 @@ export default function App() {
     const populated = applyOsmGeometryToHoles(geom);
     setRound((prev) => {
       const mergedHoles: Record<number, HolePinData> = {};
-      for (let i = 1; i <= 18; i += 1) {
+      const maxHoleNum = Math.max(18, ...Object.keys(populated).map(Number), ...Object.keys(prev.holes).map(Number));
+      for (let i = 1; i <= maxHoleNum; i += 1) {
         const existing = prev.holes[i];
         const fresh = populated[i];
         mergedHoles[i] = {
@@ -205,9 +222,9 @@ export default function App() {
           hazards: existing?.hazards ?? [],
           greenFrontLatLng: existing?.greenFrontLatLng,
           greenBackLatLng: existing?.greenBackLatLng,
-          teeLatLng: existing?.teeLatLng ?? fresh.teeLatLng,
-          greenCenterLatLng: existing?.greenCenterLatLng ?? fresh.greenCenterLatLng,
-          greenPolygon: fresh.greenPolygon ?? existing?.greenPolygon,
+          teeLatLng: fresh?.teeLatLng ?? existing?.teeLatLng,
+          greenCenterLatLng: fresh?.greenCenterLatLng ?? existing?.greenCenterLatLng,
+          greenPolygon: fresh?.greenPolygon ?? existing?.greenPolygon,
         };
       }
       const activeTee =
@@ -311,6 +328,31 @@ export default function App() {
     }
   }, [autoLogOnNfc]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.NFC_VIBRATE, JSON.stringify(nfcVibrate));
+    } catch {}
+  }, [nfcVibrate]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.NFC_SOUND, JSON.stringify(nfcSound));
+    } catch {}
+  }, [nfcSound]);
+
+  useEffect(() => {
+    const handlePhoneLockedNotice = (e: Event) => {
+      const detail = (e as CustomEvent<{ locked?: boolean }>).detail;
+      if (detail && typeof detail.locked === 'boolean') {
+        setShowPhoneLockedNotice(detail.locked);
+      } else {
+        setShowPhoneLockedNotice(true);
+      }
+    };
+    window.addEventListener('phoneLockedNotice', handlePhoneLockedNotice);
+    return () => window.removeEventListener('phoneLockedNotice', handlePhoneLockedNotice);
+  }, []);
+
   const currentHoleData = round.holes[round.currentHole] ?? {
     holeNumber: round.currentHole,
     par: 4,
@@ -385,24 +427,24 @@ export default function App() {
     };
   }, [round]);
 
-  // Previous shot (always the last COMPLETED shot on the CURRENT hole only)
+  // Previous shot (always the last COMPLETED non-penalty shot on the CURRENT hole only)
   // On the first shot of a hole, there is no previous shot for that hole
   const previousShot: ShotRecord | null = useMemo(() => {
-    const shots = currentHoleScore.shots;
-    if (!shots || shots.length === 0) return null;
-    const last = shots[shots.length - 1];
+    const nonPenShots = (currentHoleScore.shots || []).filter((s) => !isPenaltyShot(s));
+    if (nonPenShots.length === 0) return null;
+    const last = nonPenShots[nonPenShots.length - 1];
     const hasOpenShot = Boolean(last && !last.endLatLng);
 
     if (hasOpenShot) {
       // If currently tracking an open shot (e.g. shot 2), the previous completed shot on this hole is shot 1
       // If we are on the first shot of the hole (open shot 1), there is no previous shot for this hole
-      if (shots.length >= 2) return shots[shots.length - 2];
+      if (nonPenShots.length >= 2) return nonPenShots[nonPenShots.length - 2];
       return null;
     }
 
     // No open shot: if there are completed shots on this hole, return the last completed one
-    if (shots.length >= 1) {
-      return shots[shots.length - 1];
+    if (nonPenShots.length >= 1) {
+      return nonPenShots[nonPenShots.length - 1];
     }
 
     return null;
@@ -1101,6 +1143,10 @@ export default function App() {
         return;
       }
 
+      // Automatically bring the display of the app back to the Holes tab
+      setActiveTab('stats');
+      setStatsSubTab('entry');
+
       // Immediately reflect scanned club in the Club Selected dropdown
       setSelectedClubId(matchedClub.id);
 
@@ -1170,18 +1216,20 @@ export default function App() {
 
         // End the active/previous shot at the GPS location of this newly scanned tag (same hole only)
         if (!shouldAdvanceHole && updatedShots.length > 0) {
-          const prevShot = updatedShots[updatedShots.length - 1];
+          const lastIdx = updatedShots.length - 1;
+          const prevShot = updatedShots[lastIdx];
           if (!prevShot.endLatLng) {
             const origin = prevShot.startLatLng ?? teeLatLng;
             const rawNfcDist = origin && gpsFix ? computeDistanceYards(origin, gpsFix) : null;
             const measured = rawNfcDist !== null && rawNfcDist >= 0 && rawNfcDist <= 450 ? rawNfcDist : null;
+            const endPos = gpsFix ?? origin ?? teeLatLng ?? { lat: 0, lng: 0 };
             updatedShots = updatedShots.map((s, idx) =>
-              idx === updatedShots.length - 1
+              idx === lastIdx
                 ? {
                     ...s,
                     lie: isPutter ? 'green' : s.lie,
-                    endLatLng: gpsFix ?? undefined,
-                    distanceYards: measured,
+                    endLatLng: endPos,
+                    distanceYards: measured ?? s.distanceYards ?? null,
                   }
                 : s
             );
@@ -1192,6 +1240,9 @@ export default function App() {
         if (isPutter) {
           const prevShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
           const isPutt = prevShot ? prevShot.lie === 'green' : true;
+
+          const lastClosedShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
+          const endPos = gpsFix ?? lastClosedShot?.endLatLng ?? teeLatLng ?? { lat: 0, lng: 0 };
 
           const puttShot: ShotRecord = {
             id: newShotId,
@@ -1204,8 +1255,8 @@ export default function App() {
             direction: 'straight',
             penaltyStrokes: 0,
             distanceYards: null,
-            startLatLng: gpsFix ?? undefined,
-            endLatLng: gpsFix ?? undefined,
+            startLatLng: endPos,
+            endLatLng: endPos,
             timestamp: Date.now(),
             source: 'nfc',
             isPutt,
@@ -1228,8 +1279,9 @@ export default function App() {
           };
         }
 
-        // Non-putter club: start tracking the newly scanned club shot from this GPS location
-        const newShotStart = gpsFix ?? (updatedShots.length === 0 ? teeLatLng : undefined);
+        // Non-putter club: start tracking the newly scanned club shot from this location
+        const lastClosed = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
+        const newShotStart = gpsFix ?? lastClosed?.endLatLng ?? teeLatLng;
 
         const nextShot: ShotRecord = {
           id: newShotId,
@@ -1291,9 +1343,19 @@ export default function App() {
     [pairingTarget, bag, geo]
   );
 
-  const nfc = useWebNfc(handleNfcTagDetected);
+  const nfc = useWebNfc(handleNfcTagDetected, {
+    vibrate: nfcVibrate,
+    sound: nfcSound,
+  });
 
   // Automatically enable Web NFC when actively on a course
+  // Continuous NFC tracking: keep NFC scanner scanning whenever supported and a round is active
+  useEffect(() => {
+    if (nfc.isSupported && nfc.status === 'idle') {
+      void nfc.startScan();
+    }
+  }, [nfc.isSupported, nfc.status, nfc.startScan]);
+
   useEffect(() => {
     const courseId = round.course?.placeId ?? null;
     if (!courseId) {
@@ -1316,6 +1378,13 @@ export default function App() {
     },
     [nfc]
   );
+
+  const handleRequestDeviceUnlock = useCallback(() => {
+    try {
+      (window as unknown as { NativeFeedback?: { requestDeviceUnlock?: () => void } })
+        .NativeFeedback?.requestDeviceUnlock?.();
+    } catch {}
+  }, []);
 
   const handleSelectClub = useCallback(
     (clubId: string) => {
@@ -1533,47 +1602,31 @@ export default function App() {
     });
   }, []);
 
+  // Penalties are recorded as separate entries in the hole log
   const handleAddPenalty = useCallback(() => {
     setRound((prev) => {
       const holeNum = prev.currentHole;
       const holeScore = prev.scores[holeNum];
       if (!holeScore) return prev;
 
-      if (holeScore.shots.length > 0) {
-        const updated = holeScore.shots.map((s, idx) =>
-          idx === holeScore.shots.length - 1
-            ? { ...s, penaltyStrokes: (s.penaltyStrokes || 0) + 1 }
-            : s
-        );
-        return {
-          ...prev,
-          updatedAt: Date.now(),
-          scores: {
-            ...prev.scores,
-            [holeNum]: {
-              ...holeScore,
-              shots: updated,
-            },
-          },
-        };
-      }
-
       const penShot: ShotRecord = {
-        id: `shot_${Date.now()}_pen`,
+        id: `pen_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         holeNumber: holeNum,
-        strokeNumber: 1,
+        strokeNumber: holeScore.shots.length + 1,
         clubId: 'pen',
-        clubName: 'Penalty',
+        clubName: 'Penalty Stroke',
         clubShortName: 'PEN',
-        lie: 'water',
+        lie: 'penalty',
         direction: 'straight',
         penaltyStrokes: 1,
         distanceYards: null,
         timestamp: Date.now(),
         source: 'manual',
         isPutt: false,
+        isPenalty: true,
       };
 
+      const nextShots = [...holeScore.shots, penShot];
       return {
         ...prev,
         updatedAt: Date.now(),
@@ -1581,7 +1634,7 @@ export default function App() {
           ...prev.scores,
           [holeNum]: {
             ...holeScore,
-            shots: [penShot],
+            shots: nextShots,
           },
         },
       };
@@ -1590,43 +1643,53 @@ export default function App() {
     setLastNfcFeedback('Added +1 Penalty Stroke');
   }, []);
 
+  // Deleting the current shot ignores penalty strokes (penalty strokes must be deleted in the log)
   const handleUndoLastShot = useCallback(() => {
     let nextOrigin: LatLngLiteral | null = null;
     const currentRound = roundRef.current;
     const curShots = currentRound.scores[currentRound.currentHole]?.shots ?? [];
-    const lastBeforeUndo = curShots[curShots.length - 1];
-    if (lastBeforeUndo && lastBeforeUndo.id === activeNfcPuttShotIdRef.current) {
+
+    // Find the last NON-PENALTY shot
+    const nonPenIndices = curShots
+      .map((s, idx) => (!isPenaltyShot(s) ? idx : -1))
+      .filter((idx) => idx !== -1);
+
+    if (nonPenIndices.length === 0) {
+      // If only penalties exist, deleting current shot ignores them (user must delete penalties in log)
+      return;
+    }
+
+    const targetIdx = nonPenIndices[nonPenIndices.length - 1];
+    const shotToRemove = curShots[targetIdx];
+    if (shotToRemove && shotToRemove.id === activeNfcPuttShotIdRef.current) {
       activeNfcPuttShotIdRef.current = null;
     }
 
     setRound((prev) => {
       const holeNum = prev.currentHole;
       const holeScore = prev.scores[holeNum];
+      if (!holeScore) return prev;
 
-      if (holeScore.shots.length > 0) {
-        let remainingShots = [...holeScore.shots.slice(0, -1)];
-        if (remainingShots.length > 0) {
-          // Re-open the preceding shot so it becomes live again
-          const lastRemaining = { ...remainingShots[remainingShots.length - 1] };
-          lastRemaining.endLatLng = undefined;
-          lastRemaining.distanceYards = null;
-          remainingShots[remainingShots.length - 1] = lastRemaining;
+      // Filter out the last non-penalty shot, preserving all penalty strokes
+      const updatedShots = holeScore.shots.filter((_, idx) => idx !== targetIdx);
 
-          nextOrigin = lastRemaining.startLatLng ?? null;
-          setSelectedClubId(lastRemaining.clubId);
-          setSelectedLie(lastRemaining.lie);
-          setSelectedDirection(lastRemaining.direction ?? 'straight');
-          setLastNfcFeedback(`Tracking ${lastRemaining.clubName} · Walking...`);
-        } else {
-          const defaultClub =
-            bag.length > 0 ? bag.find((c) => c.id === 'dr')?.id ?? bag[0].id : 'dr';
-          setSelectedClubId(defaultClub);
-          setSelectedLie('fairway');
-          setSelectedDirection('straight');
-          setLastNfcFeedback(null);
-        }
+      // Re-open the preceding non-penalty shot if one exists
+      const remainingNonPens = updatedShots.filter((s) => !isPenaltyShot(s));
+      if (remainingNonPens.length > 0) {
+        const lastRemaining = remainingNonPens[remainingNonPens.length - 1];
+        const resolvedShots = updatedShots.map((s) =>
+          s.id === lastRemaining.id
+            ? { ...s, endLatLng: undefined, distanceYards: null }
+            : s
+        );
 
-        const resolved = resolveHoleShotsPutts(remainingShots);
+        nextOrigin = lastRemaining.startLatLng ?? null;
+        setSelectedClubId(lastRemaining.clubId);
+        setSelectedLie(lastRemaining.lie);
+        setSelectedDirection(lastRemaining.direction ?? 'straight');
+        setLastNfcFeedback(`Tracking ${lastRemaining.clubName} · Walking...`);
+
+        const resolved = resolveHoleShotsPutts(resolvedShots);
         const remainingPutts = resolved.filter((s) => s.isPutt).length;
 
         return {
@@ -1643,22 +1706,31 @@ export default function App() {
         };
       }
 
-      if (holeScore.manualPutts > 0) {
-        return {
-          ...prev,
-          updatedAt: Date.now(),
-          scores: {
-            ...prev.scores,
-            [holeNum]: {
-              ...holeScore,
-              manualPutts: holeScore.manualPutts - 1,
-            },
-          },
-        };
-      }
+      // No remaining non-penalty shots on this hole
+      const defaultClub =
+        bag.length > 0 ? bag.find((c) => c.id === 'dr')?.id ?? bag[0].id : 'dr';
+      setSelectedClubId(defaultClub);
+      setSelectedLie('fairway');
+      setSelectedDirection('straight');
+      setLastNfcFeedback(null);
 
-      return prev;
+      const resolved = resolveHoleShotsPutts(updatedShots);
+      const remainingPutts = resolved.filter((s) => s.isPutt).length;
+
+      return {
+        ...prev,
+        updatedAt: Date.now(),
+        scores: {
+          ...prev.scores,
+          [holeNum]: {
+            ...holeScore,
+            shots: resolved,
+            manualPutts: remainingPutts,
+          },
+        },
+      };
     });
+
     setPendingStartLatLng(nextOrigin);
   }, [bag]);
 
@@ -1978,34 +2050,62 @@ export default function App() {
 
         {/* Right Tools & Status Strip */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 min-w-0">
-          {/* Live GPS Accuracy Status Pill (always next to GPS Tape Measure) */}
-          <div
-            className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-xl bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/70 dark:border-slate-700/70 text-slate-600 dark:text-slate-300 text-[11px] font-mono tabular-nums shadow-2xs shrink-0"
-            title={
-              geo.position
-                ? `GPS Accuracy: ±${geo.accuracyMeters ? Math.round(geo.accuracyMeters * 3.28084) : '?'} ft`
-                : geo.errorMessage
-                  ? geo.errorMessage
-                  : 'Acquiring GPS location...'
-            }
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                geo.position
-                  ? 'bg-emerald-500 animate-pulse'
-                  : geo.errorMessage
-                    ? 'bg-rose-500'
-                    : 'bg-amber-400 animate-pulse'
-              }`}
-            />
-            <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 dark:text-slate-200">
-              {geo.position && geo.accuracyMeters
-                ? `±${Math.round(geo.accuracyMeters * 3.28084)}ft`
-                : geo.position
-                  ? 'GPS'
-                  : '±--'}
-            </span>
-          </div>
+          {/* Map Controls: Centering, Orientation, Reset, Layers (When on Map tab) */}
+          {isCourseChosen && activeTab === 'map' && (
+            <div className="flex items-center gap-0.5 sm:gap-1 p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs shrink-0">
+              {/* Layers Toggle */}
+              <button
+                type="button"
+                onClick={() => setMapBaseLayer((prev) => (prev === 'satellite' ? 'osm' : 'satellite'))}
+                className="h-8 px-2 rounded-lg flex items-center gap-1 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 active:scale-95 transition-all"
+                title="Toggle between Satellite Imagery and OpenStreetMap"
+                aria-label="Toggle map layer"
+              >
+                <Layers className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="hidden sm:inline capitalize text-[11px] font-bold">{mapBaseLayer}</span>
+              </button>
+
+              {/* Orientation Toggle (Hole Vertical vs North-Up) */}
+              <button
+                type="button"
+                onClick={() => mapHandleRef.current?.toggleOrientation()}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 active:scale-95 transition-all"
+                title="Toggle between Hole Vertical and North-Up orientation"
+                aria-label="Toggle map orientation"
+              >
+                <Compass className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              </button>
+
+              {/* Center / Fit Hole */}
+              <button
+                type="button"
+                onClick={() => mapHandleRef.current?.centerHole()}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 active:scale-95 transition-all"
+                title="Center map on current hole"
+                aria-label="Center hole"
+              >
+                <Crosshair className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              </button>
+
+              {/* Reset to Defaults */}
+              <button
+                type="button"
+                onClick={() => mapHandleRef.current?.resetDefaults()}
+                disabled={isLoadingGeometry}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-700 active:scale-95 disabled:opacity-40 transition-all"
+                title="Reset tee, pin, and ball positions to course defaults"
+                aria-label="Reset positions"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 ${
+                    isLoadingGeometry ? 'animate-spin' : ''
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
+
 
           {/* Dark Mode Toggle */}
           <button
@@ -2100,6 +2200,8 @@ export default function App() {
                 onPrevHole={() => handleChangeHole(getPrevHoleNumber(round.currentHole, round.holeMode ?? '18', Math.max(18, Object.keys(round.holes).length)))}
                 onNextHole={() => handleChangeHole(getNextHoleNumber(round.currentHole, round.holeMode ?? '18', Math.max(18, Object.keys(round.holes).length)))}
                 onOpenBagNfc={() => setActiveTab('bag')}
+                showPhoneLockedNotice={showPhoneLockedNotice}
+                onRequestDeviceUnlock={handleRequestDeviceUnlock}
               />
             </div>
 
@@ -2131,6 +2233,9 @@ export default function App() {
         {isCourseChosen && activeTab === 'map' && (
           <div className="h-full w-full relative isolate z-0">
             <OpenGolfHoleMap
+              ref={mapHandleRef}
+              baseLayer={mapBaseLayer}
+              onToggleBaseLayer={() => setMapBaseLayer((prev) => (prev === 'satellite' ? 'osm' : 'satellite'))}
               course={round.course}
               courseGeometry={courseGeometry}
               isLoadingGeometry={isLoadingGeometry}
@@ -2223,6 +2328,10 @@ export default function App() {
               autoLogOnNfc={autoLogOnNfc}
               onChangeUnit={(unit) => setRound((prev) => ({ ...prev, unit }))}
               onToggleAutoLogOnNfc={setAutoLogOnNfc}
+              nfcVibrateEnabled={nfcVibrate}
+              onToggleNfcVibrate={setNfcVibrate}
+              nfcSoundEnabled={nfcSound}
+              onToggleNfcSound={setNfcSound}
               onStopNfcScan={nfc.stopScan}
               onStartPairClub={handleStartPairClub}
               onCancelPairing={() => setPairingTarget(null)}
