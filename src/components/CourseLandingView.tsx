@@ -104,7 +104,7 @@ export const CourseLandingView: React.FC<CourseLandingViewProps> = ({
   const [showKeyDetails, setShowKeyDetails] = useState(false);
   const [customApiKey, setCustomApiKey] = useState<string>(() => {
     try {
-      return localStorage.getItem('caddieline_golf_api_key') || '';
+      return localStorage.getItem('pocketcaddy_golf_api_key') || localStorage.getItem('caddieline_golf_api_key') || '';
     } catch {
       return '';
     }

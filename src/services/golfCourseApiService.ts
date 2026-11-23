@@ -3,7 +3,7 @@ declare const __BUILD_GOLF_API_KEY__: string | undefined;
 
 export function getClientFallbackApiKey(): string {
   try {
-    const userSaved = typeof localStorage !== 'undefined' ? localStorage.getItem('caddieline_golf_api_key') : null;
+    const userSaved = typeof localStorage !== 'undefined' ? localStorage.getItem('PocketCaddy_golf_api_key') : null;
     if (userSaved && userSaved.trim()) {
       return userSaved.trim();
     }
@@ -43,7 +43,7 @@ import {
 } from '../types/golf';
 import { computeDistanceMeters } from '../utils/golfMath';
 
-const GCA_MATCH_CACHE_PREFIX = 'caddieline_gca_match_v3_';
+const GCA_MATCH_CACHE_PREFIX = 'PocketCaddy_gca_match_v3_';
 const GCA_MATCH_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 interface CachedMatchEntry {
@@ -1034,16 +1034,16 @@ export async function checkGolfApiStatus(): Promise<GolfApiStatus> {
           envVarsChecked: data.apiKeyStatus?.envVarsChecked ?? [],
         };
       }
-      console.log('[CaddieLine Deployment Check] /api/golfcourse/status:', data);
+      console.log('[PocketCaddy Deployment Check] /api/golfcourse/status:', data);
       return data;
     }
   } catch (err) {
-    console.warn('[CaddieLine Deployment Check] Could not reach /api/golfcourse/status:', err);
+    console.warn('[PocketCaddy Deployment Check] Could not reach /api/golfcourse/status:', err);
   }
   if (clientKey) {
     const len = clientKey.length;
     const masked = len >= 8 ? `${clientKey.slice(0, 4)}••••${clientKey.slice(-4)} (${len} chars)` : `${clientKey.slice(0, 2)}••••`;
-    const isSavedUserKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('caddieline_golf_api_key'));
+    const isSavedUserKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('PocketCaddy_golf_api_key'));
     return {
       configured: true,
       openGolfApi: true,

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#000000</color>
+    <color name="surface_dark">#0F1511</color>
+    <color name="card_dark">#162019</color>
+    <color name="card_border">#223528</color>
+    <color name="accent_green">#10B981</color>
+    <color name="accent_green_light">#34D399</color>
+    <color name="accent_amber">#F59E0B</color>
+    <color name="accent_blue">#38BDF8</color>
+    <color name="text_white">#FFFFFF</color>
+    <color name="text_muted">#9CA3AF</color>
+    <color name="btn_scan_normal">#059669</color>
+    <color name="btn_scan_pressed">#047857</color>
+    <color name="btn_scanning">#D97706</color>
+    <color name="cancel_bg">#374151</color>
+</resources>

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -321,6 +321,7 @@ export const ShotLoggerPanel: React.FC<ShotLoggerPanelProps> = ({
 
     return { front, center, back };
   }, [playerPosition, holeData.teeLatLng, holeData.greenCenterLatLng, holeData.greenFrontLatLng, holeData.greenBackLatLng, holeData.yardage]);
+
 
   const suggestedClub = useMemo(() => {
     return recommendClub(greenDistances.center, bag);

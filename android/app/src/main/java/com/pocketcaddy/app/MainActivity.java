@@ -1,4 +1,4 @@
-package com.caddieline.app;
+package com.pocketcaddy.app;
 
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
@@ -19,15 +19,33 @@ import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 
 import com.getcapacitor.BridgeActivity;
+import com.google.android.gms.tasks.Tasks;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.Wearable;
+
+import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCallback {
+
+    private static final String TAG = "PocketCaddy";
+
+    private static final String PATH_DISTANCES = "/pocketcaddy/distances";
+    private static final String PATH_START_ROUND = "/pocketcaddy/start_round";
+    private static final String PATH_CLUB_SCANNED = "/pocketcaddy/club_scanned";
+
+    public static volatile MainActivity sInstance = null;
+    public static volatile String sCachedDistancesJson = null;
 
     private NfcAdapter nfcAdapter;
     private PowerManager.WakeLock wakeLock;
@@ -42,14 +60,15 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     private Sensor proximitySensor;
     private volatile boolean isNear = false;
 
+    // Wear OS communication
+    private final ExecutorService wearExecutor = Executors.newSingleThreadExecutor();
+
     private final SensorEventListener proximityListener = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent event) {
             if (event.sensor.getType() == Sensor.TYPE_PROXIMITY) {
                 float distance = event.values[0];
                 float maxRange = event.sensor.getMaximumRange();
-                // Proximity sensors either return binary (0.0 or maxRange) or continuous distance in cm.
-                // A reading strictly below min(maxRange, 4.0f) or == 0.0f means covered (in pocket).
                 boolean near = distance < Math.min(maxRange, 4.0f) || distance == 0.0f;
                 if (near != isNear) {
                     isNear = near;
@@ -80,9 +99,10 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        sInstance = this;
+
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(getWindow(), true);
 
-        // Clamp app bounds strictly between top status bar and bottom navigation bar / gestures
         getWindow().setStatusBarColor(android.graphics.Color.BLACK);
         getWindow().setNavigationBarColor(android.graphics.Color.BLACK);
         android.view.View decorView = getWindow().getDecorView();
@@ -132,19 +152,8 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
     @Override
     public void onPause() {
         super.onPause();
-        if (isFinishing()) {
-            disableNfcReaderMode();
-            unregisterPocketDetection();
-        }
-    }
-
-    @Override
-    public void onStop() {
-        super.onStop();
-        if (isFinishing()) {
-            disableNfcReaderMode();
-            unregisterPocketDetection();
-        }
+        disableNfcReaderMode();
+        unregisterPocketDetection();
     }
 
     @Override
@@ -153,35 +162,64 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         try {
             unregisterReceiver(screenStateReceiver);
         } catch (Exception ignored) {}
-        disableNfcReaderMode();
         unregisterPocketDetection();
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+        sendCloseSignalToWatch();
+        wearExecutor.shutdown();
+        if (sInstance == this) {
+            sInstance = null;
+        }
     }
 
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (isNear) {
-            // Screen is in pocket: discard touch interaction completely
-            return true;
-        }
-        return super.dispatchTouchEvent(ev);
+    private void sendCloseSignalToWatch() {
+        wearExecutor.execute(() -> {
+            try {
+                List<Node> nodes = Tasks.await(Wearable.getNodeClient(this).getConnectedNodes());
+                for (Node node : nodes) {
+                    Wearable.getMessageClient(this).sendMessage(
+                        node.getId(),
+                        "/pocketcaddy/close_round",
+                        new byte[0]
+                    );
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private void setupFeedbackBridge() {
-        try {
-            if (getBridge() != null && getBridge().getWebView() != null) {
-                getBridge().getWebView().addJavascriptInterface(new Object() {
-                    @JavascriptInterface
-                    public void updateFeedbackSettings(boolean vibrate, boolean sound) {
-                        vibrateEnabled = vibrate;
-                        soundEnabled = sound;
-                    }
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().addJavascriptInterface(new Object() {
+                @JavascriptInterface
+                public void setFeedbackConfig(boolean vibrate, boolean sound) {
+                    vibrateEnabled = vibrate;
+                    soundEnabled = sound;
+                    Log.i(TAG, "Feedback config updated: vibrate=" + vibrate + ", sound=" + sound);
+                }
 
-                    @JavascriptInterface
-                    public void requestDeviceUnlock() {
-                        runOnUiThread(() -> {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                @JavascriptInterface
+                public void triggerHaptic() {
+                    vibratePhone();
+                }
+
+                @JavascriptInterface
+                public void playChime() {
+                    playScanSound();
+                }
+
+                @JavascriptInterface
+                public void wakeScreen() {
+                    wakeDeviceUp();
+                }
+
+                @JavascriptInterface
+                public void requestDeviceUnlock() {
+                    runOnUiThread(() -> {
+                        try {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                                 KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-                                if (km != null) {
+                                if (km != null && km.isKeyguardLocked()) {
                                     km.requestDismissKeyguard(MainActivity.this, new KeyguardManager.KeyguardDismissCallback() {
                                         @Override
                                         public void onDismissSucceeded() {
@@ -192,11 +230,164 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
                                     });
                                 }
                             }
-                        });
+                        } catch (Exception ignored) {}
+                    });
+                }
+
+                @JavascriptInterface
+                public void updateWatchDistances(boolean roundActive, String courseName, int hole, int par, int front, int pin, int back, String unit) {
+                    sendDistancesToWatch(roundActive, courseName, hole, par, front, pin, back, unit);
+                }
+
+                @JavascriptInterface
+                public void notifyWatchClubScanned(String clubName, String clubShortName) {
+                    sendClubScannedToWatch(clubName, clubShortName);
+                }
+            }, "NativeFeedback");
+        }
+    }
+
+    private void sendDistancesToWatch(boolean roundActive, String courseName, int hole, int par, int front, int pin, int back, String unit) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("roundActive", roundActive);
+            json.put("courseName", courseName != null ? courseName : "");
+            json.put("hole", hole);
+            json.put("par", par);
+            json.put("front", front);
+            json.put("pin", pin);
+            json.put("back", back);
+            json.put("unit", unit != null ? unit : "yd");
+            final String jsonString = json.toString();
+
+            sCachedDistancesJson = jsonString;
+
+            wearExecutor.execute(() -> {
+                try {
+                    List<Node> nodes = Tasks.await(Wearable.getNodeClient(MainActivity.this).getConnectedNodes());
+                    byte[] bytes = jsonString.getBytes(StandardCharsets.UTF_8);
+                    for (Node node : nodes) {
+                        if (roundActive) {
+                            Wearable.getMessageClient(MainActivity.this).sendMessage(node.getId(), PATH_START_ROUND, bytes);
+                        } else {
+                            Wearable.getMessageClient(MainActivity.this).sendMessage(node.getId(), "/pocketcaddy/close_round", bytes);
+                        }
                     }
-                }, "NativeFeedback");
-            }
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to send distances to watch: " + e.getMessage());
+                }
+            });
         } catch (Exception ignored) {}
+    }
+
+    public void sendClubScannedToWatch(String clubName, String clubShortName) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("clubName", clubName != null ? clubName : "Club");
+            json.put("clubShortName", clubShortName != null ? clubShortName : "");
+            json.put("timestamp", System.currentTimeMillis());
+            final String jsonString = json.toString();
+
+            wearExecutor.execute(() -> {
+                try {
+                    List<Node> nodes = Tasks.await(Wearable.getNodeClient(MainActivity.this).getConnectedNodes());
+                    byte[] bytes = jsonString.getBytes(StandardCharsets.UTF_8);
+                    for (Node node : nodes) {
+                        Wearable.getMessageClient(MainActivity.this).sendMessage(node.getId(), PATH_CLUB_SCANNED, bytes);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to send club_scanned to watch: " + e.getMessage());
+                }
+            });
+        } catch (Exception ignored) {}
+    }
+
+    public static void handleWatchLogShot(Context context, String clubId, String clubName, String lie, String direction) {
+        if (sInstance != null && !sInstance.isFinishing()) {
+            sInstance.processWatchLogShot(clubId, clubName, lie, direction);
+        } else {
+            try {
+                Intent intent = new Intent(context, MainActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.putExtra("watch_shot_club_id", clubId);
+                intent.putExtra("watch_shot_club_name", clubName);
+                intent.putExtra("watch_shot_lie", lie);
+                intent.putExtra("watch_shot_direction", direction);
+                context.startActivity(intent);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public static void handleWatchTagScanned(Context context, String tagId, String text) {
+        if (sInstance != null && !sInstance.isFinishing()) {
+            sInstance.processWatchTag(tagId, text);
+        } else {
+            try {
+                Intent intent = new Intent(context, MainActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.putExtra("watch_tag_id", tagId);
+                intent.putExtra("watch_tag_text", text);
+                context.startActivity(intent);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    public static void handleWatchHoleChange(String action) {
+        if (sInstance != null && !sInstance.isFinishing()) {
+            sInstance.processWatchHoleChange(action);
+        }
+    }
+
+    public void processWatchLogShot(String clubId, String clubName, String lie, String direction) {
+        Log.i(TAG, "Watch logged shot: Club=" + clubName + " (" + clubId + "), Lie=" + lie + ", Dir=" + direction);
+
+        vibratePhone();
+        playScanSound();
+        wakeDeviceUp();
+
+        runOnUiThread(() -> {
+            String script = String.format(
+                "window.dispatchEvent(new CustomEvent('watchLogShot', { detail: { clubId: '%s', clubName: '%s', lie: '%s', direction: '%s' } }));",
+                escapeForJs(clubId),
+                escapeForJs(clubName),
+                escapeForJs(lie),
+                escapeForJs(direction)
+            );
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().evaluateJavascript(script, null);
+            }
+        });
+    }
+
+    public void processWatchTag(String tagId, String text) {
+        Log.i(TAG, "Watch scanned tag: ID=" + tagId + ", Club=" + text);
+
+        vibratePhone();
+        playScanSound();
+        wakeDeviceUp();
+
+        runOnUiThread(() -> {
+            String script = String.format(
+                "window.dispatchEvent(new CustomEvent('nativeNfcTag', { detail: { tagId: '%s', text: '%s', source: 'watch' } }));",
+                tagId,
+                escapeForJs(text)
+            );
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().evaluateJavascript(script, null);
+            }
+        });
+    }
+
+    public void processWatchHoleChange(String action) {
+        runOnUiThread(() -> {
+            String script = String.format(
+                "window.dispatchEvent(new CustomEvent('watchHoleChange', { detail: { action: '%s' } }));",
+                escapeForJs(action)
+            );
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().evaluateJavascript(script, null);
+            }
+        });
     }
 
     private void dispatchPhoneLockedNotice(boolean locked) {
@@ -247,10 +438,8 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
             try {
                 WindowManager.LayoutParams lp = getWindow().getAttributes();
                 if (inPocket) {
-                    // Dim screen backlight to lowest possible level
                     lp.screenBrightness = 0.01f;
                 } else {
-                    // Restore default system/user brightness
                     lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
                 }
                 getWindow().setAttributes(lp);
@@ -277,11 +466,6 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         handleIntent(intent);
     }
 
-    /**
-     * Shows CaddieLine directly over the lock screen without prompting for PIN/password.
-     * Note: We deliberately do NOT call KeyguardManager.requestDismissKeyguard(), because
-     * dismissing the keyguard forces Android to present the user's PIN/pattern input screen.
-     */
     private void configureShowWhenLocked() {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -305,7 +489,7 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
                         PowerManager.SCREEN_BRIGHT_WAKE_LOCK |
                         PowerManager.ACQUIRE_CAUSES_WAKEUP |
                         PowerManager.ON_AFTER_RELEASE,
-                        "CaddieLine:NfcWakeLock"
+                        "PocketCaddy:NfcWakeLock"
                     );
                 }
                 if (!wakeLock.isHeld()) {
@@ -321,6 +505,7 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
 
     private void enableNfcReaderMode() {
         if (nfcAdapter != null && nfcAdapter.isEnabled()) {
+            Log.i(TAG, "Enabling NFC Reader Mode on phone");
             Bundle options = new Bundle();
             options.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 100);
             nfcAdapter.enableReaderMode(
@@ -332,12 +517,16 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
                 NfcAdapter.FLAG_READER_NFC_V,
                 options
             );
+        } else {
+            Log.w(TAG, "NFC is null or not enabled on this phone");
         }
     }
 
     private void disableNfcReaderMode() {
         if (nfcAdapter != null) {
-            nfcAdapter.disableReaderMode(this);
+            try {
+                nfcAdapter.disableReaderMode(this);
+            } catch (Exception ignored) {}
         }
     }
 
@@ -357,6 +546,17 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
                 processTag(tag);
             }
         }
+        if (intent.hasExtra("watch_shot_club_id")) {
+            String clubId = intent.getStringExtra("watch_shot_club_id");
+            String clubName = intent.getStringExtra("watch_shot_club_name");
+            String lie = intent.getStringExtra("watch_shot_lie");
+            String direction = intent.getStringExtra("watch_shot_direction");
+            processWatchLogShot(clubId, clubName, lie, direction);
+        } else if (intent.hasExtra("watch_tag_id")) {
+            String tagId = intent.getStringExtra("watch_tag_id");
+            String text = intent.getStringExtra("watch_tag_text");
+            processWatchTag(tagId, text);
+        }
     }
 
     private void processTag(Tag tag) {
@@ -366,19 +566,20 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
         final String tagId = bytesToHex(idBytes);
         final String ndefText = readNdefText(tag);
 
-        // Haptic pulse confirming tag read (if enabled)
+        Log.i(TAG, "NFC Tag Scanned! ID=" + tagId + ", Text=" + ndefText);
+
         vibratePhone();
-
-        // Audio confirmation tone (if enabled)
         playScanSound();
-
-        // Wake screen & show over lock screen
         wakeDeviceUp();
 
-        // Dispatch tag event to React frontend
+        // If tag contains NDEF text, send early alert to watch
+        if (ndefText != null && !ndefText.trim().isEmpty()) {
+            sendClubScannedToWatch(ndefText.trim(), ndefText.trim());
+        }
+
         runOnUiThread(() -> {
             String script = String.format(
-                "window.dispatchEvent(new CustomEvent('nativeNfcTag', { detail: { tagId: '%s', text: '%s' } }));",
+                "window.dispatchEvent(new CustomEvent('nativeNfcTag', { detail: { tagId: '%s', text: '%s', source: 'phone' } }));",
                 tagId,
                 escapeForJs(ndefText)
             );
@@ -398,21 +599,41 @@ public class MainActivity extends BridgeActivity implements NfcAdapter.ReaderCal
                     message = ndef.getNdefMessage();
                 }
                 if (message != null && message.getRecords().length > 0) {
-                    NdefRecord record = message.getRecords()[0];
-                    byte[] payload = record.getPayload();
-                    if (payload != null && payload.length > 0) {
-                        int languageCodeLength = payload[0] & 0063;
-                        return new String(
-                            payload,
-                            languageCodeLength + 1,
-                            payload.length - languageCodeLength - 1,
-                            StandardCharsets.UTF_8
-                        );
+                    for (NdefRecord record : message.getRecords()) {
+                        String payload = parseRecordPayload(record);
+                        if (payload != null && !payload.trim().isEmpty()) {
+                            return payload.trim();
+                        }
                     }
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "Error reading NDEF: " + e.getMessage());
+        }
         return "";
+    }
+
+    private String parseRecordPayload(NdefRecord record) {
+        try {
+            byte[] payload = record.getPayload();
+            if (payload == null || payload.length == 0) return null;
+
+            short tnf = record.getTnf();
+            byte[] type = record.getType();
+
+            if (tnf == NdefRecord.TNF_WELL_KNOWN && java.util.Arrays.equals(type, NdefRecord.RTD_TEXT)) {
+                int status = payload[0] & 0xFF;
+                int langCodeLen = status & 0x3F;
+                int textLen = payload.length - 1 - langCodeLen;
+                if (textLen > 0) {
+                    return new String(payload, 1 + langCodeLen, textLen, StandardCharsets.UTF_8);
+                }
+            }
+
+            return new String(payload, StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private void vibratePhone() {

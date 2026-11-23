@@ -770,20 +770,16 @@ export function resolveHoleShotsPutts(shots: ShotRecord[]): ShotRecord[] {
       return shot;
     }
 
-    // 2. Manually added putt (e.g. +1 Putt button) is assumed to be a putt
-    if (shot.source === 'manual' && shot.isPutt) {
-      return shot;
-    }
-
     const isPutter = isPutterClub(shot);
     if (!isPutter) {
       // Non-putter shot: landing on green/holed does NOT make it a putt!
       return shot.isPutt ? { ...shot, isPutt: false } : shot;
     }
 
-    // 3. Scanned putter: goes off previous shot landing location (green)
+    // 2. Putter club: ONLY count as a putt if the previous shot was labeled as landing on the green!
+    // Putter strokes from off the green (fringe/fairway/rough) count as strokes, but NOT as putts.
     const prevShot = idx > 0 ? shots[idx - 1] : null;
-    const countedAsPutt = prevShot ? prevShot.lie === 'green' : (shot.isPutt ?? false);
+    const countedAsPutt = prevShot ? prevShot.lie === 'green' : false;
 
     if (shot.isPutt !== countedAsPutt) {
       return { ...shot, isPutt: countedAsPutt };

@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
-const OSM_USER_AGENT = 'CaddieLineGolfTracker/1.0 (+https://caddieline.app)';
+const OSM_USER_AGENT = 'PocketCaddyGolfTracker/1.0 (+https://pocketcaddy.app)';
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass.openstreetmap.fr/api/interpreter',
@@ -1448,7 +1448,7 @@ out center 30;
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     const diag = getGolfApiKeyDiagnostic();
-    console.log(`CaddieLine server listening on http://0.0.0.0:${PORT}`);
+    console.log(`PocketCaddy server listening on http://0.0.0.0:${PORT}`);
     console.log(
       `[Deployment Check] GolfCourseAPI Key: ${
         diag.configured

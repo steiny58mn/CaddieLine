@@ -1,0 +1,555 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:keepScreenOn="true"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="10dp">
+
+    <!-- 1. Normal Yardages View (Shown during an active round) -->
+    <LinearLayout
+        android:id="@+id/layoutMain"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:visibility="gone">
+
+        <!-- Hole Header with Navigation -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="3dp">
+
+            <TextView
+                android:id="@+id/btnPrevHole"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:background="@drawable/btn_nav_bg"
+                android:gravity="center"
+                android:text="◀"
+                android:textColor="@color/accent_green_light"
+                android:textSize="9sp" />
+
+            <TextView
+                android:id="@+id/tvHoleInfo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:gravity="center"
+                android:text="Hole 1 • Par 4"
+                android:textColor="@color/text_white"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnNextHole"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:background="@drawable/btn_nav_bg"
+                android:gravity="center"
+                android:text="▶"
+                android:textColor="@color/accent_green_light"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Front / Pin / Back Distances Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_card_round"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:layout_marginTop="1dp"
+            android:gravity="center_vertical">
+
+            <!-- Front Distance -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/front_label"
+                    android:textColor="@color/text_muted"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvFrontDistance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="---"
+                    android:textColor="@color/text_white"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View
+                android:layout_width="1dp"
+                android:layout_height="22dp"
+                android:background="@color/card_border" />
+
+            <!-- Pin Distance (HERO) -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.3"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/pin_label"
+                    android:textColor="@color/accent_green_light"
+                    android:textSize="9sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvPinDistance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="---"
+                    android:textColor="@color/text_white"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvUnit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/yd_unit"
+                    android:textColor="@color/text_muted"
+                    android:textSize="8sp" />
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View
+                android:layout_width="1dp"
+                android:layout_height="22dp"
+                android:background="@color/card_border" />
+
+            <!-- Back Distance -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/back_label"
+                    android:textColor="@color/text_muted"
+                    android:textSize="8sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvBackDistance"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="---"
+                    android:textColor="@color/text_white"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Log Shot Action Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_marginEnd="14dp"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <Button
+                android:id="@+id/btnLogShot"
+                android:layout_width="match_parent"
+                android:layout_height="32dp"
+                android:background="@drawable/btn_scan_bg"
+                android:text="🎯 Log Shot"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="@string/waiting_for_phone"
+            android:textColor="@color/text_muted"
+            android:textSize="8sp"
+            android:maxLines="1"
+            android:ellipsize="end" />
+    </LinearLayout>
+
+    <!-- 2. No Active Round Screen (Shown when no round is started on phone) -->
+    <LinearLayout
+        android:id="@+id/layoutNoRound"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@color/black"
+        android:visibility="visible"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⛳"
+            android:textSize="26sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="No Active Round"
+            android:textColor="@color/text_white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvNoRoundHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:gravity="center"
+            android:text="Start a round on PocketCaddy on your phone to begin"
+            android:textColor="@color/text_muted"
+            android:textSize="9sp" />
+
+        <Button
+            android:id="@+id/btnRetrySync"
+            android:layout_width="wrap_content"
+            android:layout_height="28dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/btn_cancel_bg"
+            android:text="Check Again"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textAllCaps="false"
+            android:textColor="@color/accent_green_light"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <!-- 3. Club Picker Overlay (Wrist-based Club Selection) -->
+    <LinearLayout
+        android:id="@+id/layoutClubPicker"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/black"
+        android:visibility="gone"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvPickerTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="Select Club"
+            android:textColor="@color/accent_green_light"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvPickerSubtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="Tap club to log shot"
+            android:textColor="@color/text_muted"
+            android:textSize="8sp"
+            android:layout_marginBottom="4dp" />
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/containerClubList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center_horizontal" />
+        </ScrollView>
+
+        <Button
+            android:id="@+id/btnCancelPicker"
+            android:layout_width="match_parent"
+            android:layout_height="26dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_marginTop="3dp"
+            android:background="@drawable/btn_cancel_bg"
+            android:text="Back"
+            android:textAllCaps="false"
+            android:textColor="@color/text_white"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <!-- 4. Shot Details Overlay (Where Did Ball Land & Direction) -->
+    <LinearLayout
+        android:id="@+id/layoutShotDetails"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="@color/black"
+        android:gravity="center_horizontal"
+        android:visibility="gone"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/tvShotClubName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="7 Iron"
+            android:textColor="@color/accent_green_light"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Where did the ball land?"
+            android:textColor="@color/text_muted"
+            android:textSize="8sp"
+            android:layout_marginBottom="3dp" />
+
+        <!-- Lie Options (2x2 Grid) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="2dp">
+
+            <Button
+                android:id="@+id/btnLieFairway"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="24dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/btn_pill_active"
+                android:text="Fairway"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="9sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnLieRough"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="24dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/btn_pill_inactive"
+                android:text="Rough"
+                android:textAllCaps="false"
+                android:textColor="@color/text_muted"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="3dp">
+
+            <Button
+                android:id="@+id/btnLieSand"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="24dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/btn_pill_inactive"
+                android:text="Sand"
+                android:textAllCaps="false"
+                android:textColor="@color/text_muted"
+                android:textSize="9sp" />
+
+            <Button
+                android:id="@+id/btnLieGreen"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="24dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/btn_pill_inactive"
+                android:text="Green"
+                android:textAllCaps="false"
+                android:textColor="@color/text_muted"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Direction Options -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Direction"
+            android:textColor="@color/text_muted"
+            android:textSize="8sp"
+            android:layout_marginBottom="2dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginBottom="5dp">
+
+            <Button
+                android:id="@+id/btnDirLeft"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="22dp"
+                android:layout_marginEnd="2dp"
+                android:background="@drawable/btn_pill_inactive"
+                android:text="◀ L"
+                android:textAllCaps="false"
+                android:textColor="@color/text_muted"
+                android:textSize="9sp" />
+
+            <Button
+                android:id="@+id/btnDirStraight"
+                android:layout_width="0dp"
+                android:layout_weight="1.2"
+                android:layout_height="22dp"
+                android:layout_marginStart="1dp"
+                android:layout_marginEnd="1dp"
+                android:background="@drawable/btn_pill_active"
+                android:text="▲ Center"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="9sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnDirRight"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="22dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/btn_pill_inactive"
+                android:text="▶ R"
+                android:textAllCaps="false"
+                android:textColor="@color/text_muted"
+                android:textSize="9sp" />
+        </LinearLayout>
+
+        <!-- Save and Cancel Actions -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnCancelShot"
+                android:layout_width="44dp"
+                android:layout_height="26dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/btn_cancel_bg"
+                android:text="Back"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="9sp" />
+
+            <Button
+                android:id="@+id/btnConfirmShot"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="26dp"
+                android:background="@drawable/btn_scan_bg"
+                android:text="✓ Save Shot"
+                android:textAllCaps="false"
+                android:textColor="@color/text_white"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 5. Success Confirmation Overlay -->
+    <LinearLayout
+        android:id="@+id/layoutSuccess"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@color/black"
+        android:visibility="gone"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="✓"
+            android:textColor="@color/accent_green_light"
+            android:textSize="30sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSuccessClub"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="7 Iron Logged!"
+            android:textColor="@color/text_white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSuccessDetails"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Fairway · Center"
+            android:textColor="@color/accent_green_light"
+            android:textSize="9sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Synced to PocketCaddy"
+            android:textColor="@color/text_muted"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+</FrameLayout>

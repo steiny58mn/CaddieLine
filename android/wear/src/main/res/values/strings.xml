@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PocketCaddie</string>
+    <string name="hole_format">Hole %d</string>
+    <string name="par_format">Par %d</string>
+    <string name="front_label">FRONT</string>
+    <string name="pin_label">PIN</string>
+    <string name="back_label">BACK</string>
+    <string name="yd_unit">YD</string>
+    <string name="btn_scan_tag">Scan Club Tag</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="scanning_title">Ready to Scan</string>
+    <string name="scanning_hint">Tap club grip to watch face</string>
+    <string name="waiting_for_phone">Waiting for phone sync…</string>
+    <string name="scan_timeout">Scan timed out</string>
+    <string name="club_tagged">Club Tagged!</string>
+</resources>

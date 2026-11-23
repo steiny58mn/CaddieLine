@@ -21,6 +21,7 @@ import {
   DEFAULT_PAR_LAYOUT,
   computeDistanceMeters,
   computeDistanceYards,
+  computePolygonFrontCenterBack,
   createInitialRoundState,
   getHoleStrokes,
   getLieMeta,
@@ -60,19 +61,20 @@ import { CourseLandingView } from './components/CourseLandingView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { useWakeLock } from './hooks/useWakeLock';
 import { usePocketMode } from './hooks/usePocketMode';
+import { notifyWatchClubScanned, subscribeToWatchHoleChange, subscribeToWatchLogShot, syncDistancesToWatch, WatchShotEventDetail } from './services/watchBridgeService';
 
 const STORAGE_KEYS = {
-  ROUND: 'caddieline_active_round_v1',
-  SAVED_ROUNDS: 'caddieline_saved_rounds_v1',
-  BAG: 'caddieline_club_bag_v2',
-  AUTO_NFC: 'caddieline_auto_nfc_v1',
-  NFC_VIBRATE: 'caddieline_nfc_vibrate_v1',
-  NFC_SOUND: 'caddieline_nfc_sound_v1',
+  ROUND: 'pocketcaddy_active_round_v1',
+  SAVED_ROUNDS: 'pocketcaddy_saved_rounds_v1',
+  BAG: 'pocketcaddy_club_bag_v2',
+  AUTO_NFC: 'pocketcaddy_auto_nfc_v1',
+  NFC_VIBRATE: 'pocketcaddy_nfc_vibrate_v1',
+  NFC_SOUND: 'pocketcaddy_nfc_sound_v1',
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(key) || (key.startsWith("pocketcaddy_") ? localStorage.getItem(key.replace("pocketcaddy_", "caddieline_")) : null);
     if (!raw) return fallback;
     return JSON.parse(raw) as T;
   } catch {
@@ -88,7 +90,7 @@ export default function App() {
   // Dark Mode Theme State & Persistence
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem('caddieline_theme');
+      const saved = localStorage.getItem('pocketcaddy_theme') || localStorage.getItem('caddieline_theme');
       if (saved === 'dark' || saved === 'light') return saved;
       if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
         return 'dark';
@@ -99,7 +101,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('caddieline_theme', theme);
+      localStorage.setItem('pocketcaddy_theme', theme);
     } catch {}
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
@@ -1131,10 +1133,15 @@ export default function App() {
         return;
       }
 
-      // 2. Active Round Mode: match tagId to club in bag
-      const matchedClub = bag.find(
-        (c) => c.nfcTagId && c.nfcTagId.toUpperCase() === payload.tagId.toUpperCase()
-      );
+      // 2. Active Round Mode: match tagId to club in bag or fallback to club ID/name (e.g. from wrist picker)
+      const pool = bag.length > 0 ? bag : CLUB_PRESETS;
+      const upperTag = (payload.tagId || '').toUpperCase();
+      const rawText = (payload.rawRecords && payload.rawRecords[0] ? payload.rawRecords[0] : '').trim().toLowerCase();
+
+      const matchedClub =
+        pool.find((c) => 'nfcTagId' in c && (c as { nfcTagId?: string }).nfcTagId?.toUpperCase() === upperTag) ||
+        pool.find((c) => c.id.toUpperCase() === upperTag || c.shortName.toUpperCase() === upperTag) ||
+        pool.find((c) => rawText && (c.name.toLowerCase() === rawText || c.shortName.toLowerCase() === rawText || c.id.toLowerCase() === rawText));
 
       if (!matchedClub) {
         setLastNfcFeedback(
@@ -1149,6 +1156,9 @@ export default function App() {
 
       // Immediately reflect scanned club in the Club Selected dropdown
       setSelectedClubId(matchedClub.id);
+
+      // Chime, vibrate, and show confirmation on the connected watch
+      notifyWatchClubScanned(matchedClub.name, matchedClub.shortName);
 
       const gpsFix = isPhysicallyAtCourse ? ((await geo.requestSingleFix()) ?? geo.position) : effectivePlayerPosition;
 
@@ -1227,7 +1237,7 @@ export default function App() {
               idx === lastIdx
                 ? {
                     ...s,
-                    lie: isPutter ? 'green' : s.lie,
+                    lie: s.lie,
                     endLatLng: endPos,
                     distanceYards: measured ?? s.distanceYards ?? null,
                   }
@@ -1236,10 +1246,10 @@ export default function App() {
           }
         }
 
-        // If Putter tag is scanned: counts as putt ONLY if previous shot ended on green
+        // If Putter tag is scanned: counts as putt ONLY if previous shot was labeled as landing on the green
         if (isPutter) {
           const prevShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
-          const isPutt = prevShot ? prevShot.lie === 'green' : true;
+          const isPutt = prevShot ? prevShot.lie === 'green' : false;
 
           const lastClosedShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
           const endPos = gpsFix ?? lastClosedShot?.endLatLng ?? teeLatLng ?? { lat: 0, lng: 0 };
@@ -1251,7 +1261,7 @@ export default function App() {
             clubId: matchedClub.id,
             clubName: matchedClub.name,
             clubShortName: matchedClub.shortName,
-            lie: 'green',
+            lie: isPutt ? 'green' : (prevShot?.lie ?? 'fairway'),
             direction: 'straight',
             penaltyStrokes: 0,
             distanceYards: null,
@@ -1260,6 +1270,7 @@ export default function App() {
             timestamp: Date.now(),
             source: 'nfc',
             isPutt,
+            isPuttManualOverride: undefined,
           };
           const nextShots = resolveHoleShotsPutts([...updatedShots, puttShot]);
           const nextPutts = nextShots.filter((s) => s.isPutt).length;
@@ -1523,6 +1534,397 @@ export default function App() {
     },
     [geo.isManualOverride, geo.position, targetPin, geo.resumeLiveGps, bag]
   );
+
+  const handleWatchLogShot = useCallback(
+    (detail: WatchShotEventDetail) => {
+      const pool = bag.length > 0 ? bag : CLUB_PRESETS;
+      const targetId = (detail.clubId || '').toLowerCase().trim();
+      const targetName = (detail.clubName || '').toLowerCase().trim();
+
+      const matchedClub =
+        pool.find((c) => c.id.toLowerCase() === targetId) ||
+        pool.find((c) => c.shortName.toLowerCase() === targetId) ||
+        pool.find((c) => c.name.toLowerCase() === targetName) ||
+        pool[0];
+
+      const isPutter =
+        matchedClub.category === 'putter' ||
+        matchedClub.id === 'pt' ||
+        matchedClub.name.toLowerCase().includes('putter');
+
+      const isDriver =
+        matchedClub.id === 'dr' ||
+        matchedClub.shortName.toUpperCase() === 'D' ||
+        matchedClub.name.toLowerCase().includes('driver');
+
+      const curRound = roundRef.current;
+      const curHoleNum = curRound.currentHole;
+      const curHoleScore = curRound.scores[curHoleNum] ?? { shots: [], manualPutts: 0 };
+      const hasExistingShotsOnHole =
+        curHoleScore.shots.length > 0 || curHoleScore.manualPutts > 0;
+      const hasPutterBeenUsed =
+        curHoleScore.manualPutts > 0 ||
+        curHoleScore.shots.some((s) => s.isPutt || isPutterClub(s));
+
+      const mode = curRound.holeMode ?? '18';
+      const totalHolesCount = Math.max(18, Object.keys(curRound.holes).length);
+
+      const shouldAdvanceHole =
+        (isDriver && hasExistingShotsOnHole) ||
+        (hasPutterBeenUsed && isClubHigherThanPW(matchedClub));
+
+      const targetHoleNum = shouldAdvanceHole
+        ? getNextHoleNumber(curHoleNum, mode, totalHolesCount)
+        : curHoleNum;
+
+      const watchLie: ShotLie =
+        detail.lie === 'green' ? 'green' :
+        detail.lie === 'rough' ? 'rough' :
+        detail.lie === 'sand' ? 'sand' : 'fairway';
+      const watchDirection: ShotDirection = detail.direction ?? 'straight';
+
+      // Bring phone UI to Stats/Entry view
+      setActiveTab('stats');
+      setStatsSubTab('entry');
+
+      // Best available GPS or course location
+      const currentPos: LatLngLiteral | undefined =
+        geo.position ?? effectivePlayerPosition ?? targetPin ?? currentHoleTee ?? undefined;
+
+      const newShotId = `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+      if (isPutter) {
+        // Log Putt
+        activeNfcPuttShotIdRef.current = null;
+        let isCountedPutt = false;
+        let closedSummary = '';
+
+        setRound((prev) => {
+          const holeNum = prev.currentHole;
+          const holeScore = prev.scores[holeNum] ?? { shots: [], manualPutts: 0 };
+          const teeLatLng = currentHoleTee ?? prev.holes[holeNum]?.teeLatLng;
+          let updatedShots = [...holeScore.shots];
+
+          // Close previous open shot if still open
+          if (updatedShots.length > 0) {
+            const lastIdx = updatedShots.length - 1;
+            const last = updatedShots[lastIdx];
+            if (!last.endLatLng) {
+              const origin = last.startLatLng ?? teeLatLng;
+              const rawDist = origin && currentPos ? computeDistanceYards(origin, currentPos) : null;
+              const measured = rawDist !== null && rawDist >= 0 && rawDist <= 450 ? rawDist : null;
+              const endPos = currentPos ?? origin ?? teeLatLng ?? { lat: 0, lng: 0 };
+              closedSummary = `Ended ${last.clubShortName}${measured !== null ? ` (${measured} yds)` : ''} · `;
+              updatedShots[lastIdx] = {
+                ...last,
+                lie: 'green',
+                endLatLng: endPos,
+                distanceYards: measured ?? last.distanceYards ?? null,
+              };
+            }
+          }
+
+          // ONLY count putter as a putt if the previous shot was labeled as landing on the green!
+          const prevShot = updatedShots.length > 0 ? updatedShots[updatedShots.length - 1] : null;
+          isCountedPutt = prevShot ? prevShot.lie === 'green' : false;
+
+          // Add putter stroke
+          const puttShot: ShotRecord = {
+            id: newShotId,
+            holeNumber: holeNum,
+            strokeNumber: updatedShots.length + 1,
+            clubId: matchedClub.id,
+            clubName: matchedClub.name,
+            clubShortName: matchedClub.shortName,
+            lie: isCountedPutt ? 'green' : (watchLie !== 'fairway' ? watchLie : (prevShot?.lie ?? 'fairway')),
+            direction: 'straight',
+            penaltyStrokes: 0,
+            distanceYards: null,
+            startLatLng: currentPos,
+            endLatLng: undefined,
+            timestamp: Date.now(),
+            source: 'manual',
+            isPutt: isCountedPutt,
+            isPuttManualOverride: undefined,
+          };
+
+          const nextShots = resolveHoleShotsPutts([...updatedShots, puttShot]);
+          const nextPutts = nextShots.filter((s) => s.isPutt).length;
+
+          return {
+            ...prev,
+            updatedAt: Date.now(),
+            scores: {
+              ...prev.scores,
+              [holeNum]: {
+                ...holeScore,
+                shots: nextShots,
+                manualPutts: nextPutts,
+              },
+            },
+          };
+        });
+
+        setSelectedClubId(matchedClub.id);
+        setSelectedLie('green');
+        setSelectedDirection('straight');
+        if (currentPos) {
+          setPendingStartLatLng(currentPos);
+        }
+        setTargetPin(null);
+        setLastNfcFeedback(
+          isCountedPutt
+            ? `${closedSummary}Watch Logged: Putter (Putt)`
+            : `${closedSummary}Watch Logged: Putter (Stroke · Not a Putt)`
+        );
+        return;
+      }
+
+      // Non-putter club
+      let closedSummary = '';
+      setRound((prev) => {
+        const fromHoleNum = prev.currentHole;
+        const curHoleData = prev.scores[fromHoleNum] ?? { shots: [], manualPutts: 0 };
+        let curHoleUpdatedShots = [...curHoleData.shots];
+
+        // End previous open shot if player was tracking an open shot on the current hole
+        if (curHoleUpdatedShots.length > 0) {
+          const lastIdx = curHoleUpdatedShots.length - 1;
+          const prevShot = curHoleUpdatedShots[lastIdx];
+          if (!prevShot.endLatLng) {
+            const origin = prevShot.startLatLng ?? (currentHoleTee ?? prev.holes[fromHoleNum]?.teeLatLng);
+            const rawClosed = origin && currentPos ? computeDistanceYards(origin, currentPos) : null;
+            const closedYards = rawClosed !== null && rawClosed >= 0 && rawClosed <= 450 ? rawClosed : null;
+            const endPos = currentPos ?? origin ?? { lat: 0, lng: 0 };
+            closedSummary = `Ended ${prevShot.clubShortName}${closedYards !== null ? ` (${closedYards} yds)` : ''} · `;
+            curHoleUpdatedShots[lastIdx] = {
+              ...prevShot,
+              lie: prevShot.lie === 'green' ? 'green' : watchLie,
+              direction: prevShot.direction ?? watchDirection,
+              endLatLng: endPos,
+              distanceYards: closedYards ?? prevShot.distanceYards ?? null,
+            };
+          }
+        }
+
+        if (shouldAdvanceHole) {
+          // Advance to targetHoleNum
+          const nextHoleTee = prev.holes[targetHoleNum]?.teeLatLng;
+          const nextShotStart = currentPos ?? nextHoleTee ?? undefined;
+          const targetHoleData = prev.scores[targetHoleNum] ?? { shots: [], manualPutts: 0 };
+          const nextShot: ShotRecord = {
+            id: newShotId,
+            holeNumber: targetHoleNum,
+            strokeNumber: targetHoleData.shots.length + 1,
+            clubId: matchedClub.id,
+            clubName: matchedClub.name,
+            clubShortName: matchedClub.shortName,
+            lie: watchLie,
+            direction: watchDirection,
+            penaltyStrokes: getLieMeta(watchLie).penalty,
+            distanceYards: null,
+            startLatLng: nextShotStart,
+            endLatLng: undefined,
+            timestamp: Date.now(),
+            source: 'manual',
+            isPutt: false,
+          };
+
+          const resolvedTargetShots = resolveHoleShotsPutts([...targetHoleData.shots, nextShot]);
+          const nextPutts = resolvedTargetShots.filter((s) => s.isPutt).length;
+
+          return {
+            ...prev,
+            currentHole: targetHoleNum,
+            updatedAt: Date.now(),
+            scores: {
+              ...prev.scores,
+              [fromHoleNum]: {
+                ...curHoleData,
+                shots: curHoleUpdatedShots,
+                manualPutts: curHoleUpdatedShots.filter((s) => s.isPutt).length,
+              },
+              [targetHoleNum]: {
+                ...targetHoleData,
+                shots: resolvedTargetShots,
+                manualPutts: nextPutts,
+              },
+            },
+          };
+        }
+
+        // Same hole: start next tracking shot
+        const lastClosedShot = curHoleUpdatedShots.length > 0 ? curHoleUpdatedShots[curHoleUpdatedShots.length - 1] : null;
+        const newShotStart = currentPos ?? lastClosedShot?.endLatLng ?? (currentHoleTee ?? prev.holes[fromHoleNum]?.teeLatLng) ?? undefined;
+        const nextShot: ShotRecord = {
+          id: newShotId,
+          holeNumber: fromHoleNum,
+          strokeNumber: curHoleUpdatedShots.length + 1,
+          clubId: matchedClub.id,
+          clubName: matchedClub.name,
+          clubShortName: matchedClub.shortName,
+          lie: watchLie,
+          direction: watchDirection,
+          penaltyStrokes: getLieMeta(watchLie).penalty,
+          distanceYards: null,
+          startLatLng: newShotStart,
+          endLatLng: undefined,
+          timestamp: Date.now(),
+          source: 'manual',
+          isPutt: false,
+        };
+
+        const resolved = resolveHoleShotsPutts([...curHoleUpdatedShots, nextShot]);
+        const nextPutts = resolved.filter((s) => s.isPutt).length;
+
+        return {
+          ...prev,
+          updatedAt: Date.now(),
+          scores: {
+            ...prev.scores,
+            [fromHoleNum]: {
+              ...curHoleData,
+              shots: resolved,
+              manualPutts: nextPutts,
+            },
+          },
+        };
+      });
+
+      setSelectedClubId(matchedClub.id);
+      setSelectedLie(watchLie);
+      setSelectedDirection(watchDirection);
+      if (shouldAdvanceHole) {
+        setTargetPin(null);
+      }
+      if (currentPos) {
+        setPendingStartLatLng(currentPos);
+      }
+
+      const lieLabel = detail.lie ? ` (${detail.lie})` : '';
+      if (shouldAdvanceHole) {
+        setLastNfcFeedback(`Moved to Hole ${targetHoleNum} · Started ${matchedClub.name}${lieLabel}`);
+      } else {
+        setLastNfcFeedback(`${closedSummary}Watch Logged: ${matchedClub.name}${lieLabel} · Tracking distance...`);
+      }
+    },
+    [bag, effectivePlayerPosition, currentHoleTee, targetPin, geo.position]
+  );
+
+  useEffect(() => {
+    return subscribeToWatchHoleChange((action) => {
+      const totalRoundHoles = Math.max(18, Object.keys(roundRef.current.holes).length);
+      const targetHole =
+        action === 'prev'
+          ? getPrevHoleNumber(roundRef.current.currentHole, roundRef.current.holeMode ?? '18', totalRoundHoles)
+          : getNextHoleNumber(roundRef.current.currentHole, roundRef.current.holeMode ?? '18', totalRoundHoles);
+      handleChangeHole(targetHole);
+    });
+  }, [handleChangeHole]);
+
+  useEffect(() => {
+    return subscribeToWatchLogShot((detail: WatchShotEventDetail) => {
+      handleWatchLogShot(detail);
+    });
+  }, [handleWatchLogShot]);
+
+  // Authoritative live green distances for both Phone UI and Watch Companion sync
+  const currentHoleGreenDistances = useMemo(() => {
+    if (!round.course) return null;
+    const curHole = round.holes[round.currentHole];
+    if (!curHole) return null;
+
+    const origin = effectivePlayerPosition ?? currentHoleTee ?? curHole.teeLatLng ?? null;
+    const greenCenter = targetPin ?? curHole.greenCenterLatLng ?? null;
+    const greenFront = curHole.greenFrontLatLng ?? null;
+    const greenBack = curHole.greenBackLatLng ?? null;
+    const greenPoly = curHole.greenPolygon;
+
+    const isMeters = round.unit === 'meters';
+    const distCalc = isMeters ? computeDistanceMeters : computeDistanceYards;
+
+    let centerDist: number | null = null;
+    let frontDist: number | null = null;
+    let backDist: number | null = null;
+
+    if (origin && greenCenter) {
+      centerDist = distCalc(origin, greenCenter);
+    } else if (curHole.yardage) {
+      centerDist = curHole.yardage;
+    }
+
+    if (origin && greenPoly && greenPoly.length >= 3) {
+      const polyRes = computePolygonFrontCenterBack(origin, greenPoly, greenCenter ?? undefined);
+      if (polyRes) {
+        frontDist = isMeters ? Math.round(polyRes.frontYards * 0.9144) : polyRes.frontYards;
+        backDist = isMeters ? Math.round(polyRes.backYards * 0.9144) : polyRes.backYards;
+        if (centerDist === null) {
+          centerDist = isMeters ? Math.round(polyRes.centerYards * 0.9144) : polyRes.centerYards;
+        }
+      }
+    }
+
+    if (frontDist === null && origin && greenFront) {
+      frontDist = distCalc(origin, greenFront);
+    }
+    if (backDist === null && origin && greenBack) {
+      backDist = distCalc(origin, greenBack);
+    }
+
+    // Default buffers if polygon edges aren't mapped
+    if (centerDist !== null) {
+      const buffer = isMeters ? 14 : 15;
+      if (frontDist === null) {
+        frontDist = Math.max(0, centerDist - buffer);
+      }
+      if (backDist === null) {
+        backDist = centerDist + buffer;
+      }
+    }
+
+    return {
+      hole: round.currentHole,
+      par: curHole.par ?? 4,
+      front: frontDist,
+      pin: centerDist,
+      back: backDist,
+      unit: isMeters ? 'm' : 'yd',
+    };
+  }, [
+    round.course,
+    round.holes,
+    round.currentHole,
+    round.unit,
+    effectivePlayerPosition,
+    currentHoleTee,
+    targetPin,
+  ]);
+
+  useEffect(() => {
+    if (!round.course || !currentHoleGreenDistances) {
+      syncDistancesToWatch({
+        roundActive: false,
+        courseName: '',
+        hole: 1,
+        par: 4,
+        front: null,
+        pin: null,
+        back: null,
+      });
+      return;
+    }
+
+    syncDistancesToWatch({
+      roundActive: true,
+      courseName: round.course?.name || 'Golf Round',
+      hole: currentHoleGreenDistances.hole,
+      par: currentHoleGreenDistances.par,
+      front: currentHoleGreenDistances.front,
+      pin: currentHoleGreenDistances.pin,
+      back: currentHoleGreenDistances.back,
+      unit: currentHoleGreenDistances.unit,
+    });
+  }, [round.course, currentHoleGreenDistances]);
 
   const handleUpdateHoleMeta = useCallback((holeNumber: number, patch: Partial<HolePinData>) => {
     setRound((prev) => ({
@@ -1864,9 +2266,9 @@ export default function App() {
             hazards: existing?.hazards ?? [],
             greenFrontLatLng: existing?.greenFrontLatLng,
             greenBackLatLng: existing?.greenBackLatLng,
-            teeLatLng: existing?.teeLatLng ?? fresh.teeLatLng,
-            greenCenterLatLng: existing?.greenCenterLatLng ?? fresh.greenCenterLatLng,
-            greenPolygon: fresh.greenPolygon ?? existing?.greenPolygon,
+            teeLatLng: fresh?.teeLatLng ?? existing?.teeLatLng,
+            greenCenterLatLng: fresh?.greenCenterLatLng ?? existing?.greenCenterLatLng,
+            greenPolygon: fresh?.greenPolygon ?? existing?.greenPolygon,
           };
         }
         const nextTees = prev.course?.availableTees?.length
@@ -2012,7 +2414,7 @@ export default function App() {
             </div>
             <div className="hidden xs:block leading-none">
               <span className="font-display text-lg sm:text-xl font-black tracking-tight bg-gradient-to-r from-emerald-900 via-emerald-700 to-teal-700 dark:from-emerald-300 dark:via-emerald-400 dark:to-teal-300 bg-clip-text text-transparent">
-                CaddieLine
+                PocketCaddy
               </span>
               <span className="block text-[9px] font-bold uppercase tracking-wider text-emerald-700/70 dark:text-emerald-400/70 font-mono mt-0.5">
                 GPS · NFC Caddie

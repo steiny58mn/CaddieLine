@@ -60,12 +60,12 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'd
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 id="pwa-install-guide-title" className="text-lg font-bold text-[#0F1A14]">
-                  {isIOS ? 'Install on iPhone / iPad' : 'Install CaddieLine on Android'}
+                  {isIOS ? 'Install on iPhone / iPad' : 'Install PocketCaddy on Android'}
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {isIOS
-                    ? 'Add CaddieLine to your Home Screen as a standalone app.'
-                    : 'Run CaddieLine standalone on Android Chrome to enable your hardware NFC reader.'}
+                    ? 'Add PocketCaddy to your Home Screen as a standalone app.'
+                    : 'Run PocketCaddy standalone on Android Chrome to enable your hardware NFC reader.'}
                 </p>
               </div>
               <button
@@ -87,7 +87,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'd
                   Scroll down and tap <strong>Add to Home Screen</strong>.
                 </li>
                 <li>
-                  Tap <strong>Add</strong> to launch CaddieLine from your Home Screen.
+                  Tap <strong>Add</strong> to launch PocketCaddy from your Home Screen.
                 </li>
               </ol>
             ) : (
@@ -102,7 +102,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'd
                     tap the install prompt when Chrome displays it).
                   </li>
                   <li>
-                    Open <strong>CaddieLine</strong> from your Android app drawer/home screen, go
+                    Open <strong>PocketCaddy</strong> from your Android app drawer/home screen, go
                     to <strong>Bag &amp; NFC</strong>, and tap <strong>Start NFC Scanning</strong>{' '}
                     to scan GolfPad tags.
                   </li>

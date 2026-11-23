@@ -18,7 +18,7 @@ import {
   pointToPolylineMinDistanceMeters,
 } from '../utils/golfMath';
 
-const GEOMETRY_CACHE_PREFIX = 'caddieline_osm_geom_v12_';
+const GEOMETRY_CACHE_PREFIX = 'pocketcaddy_osm_geom_v12_';
 const METERS_TO_YARDS = 1.0936133;
 
 interface OverpassPoint {

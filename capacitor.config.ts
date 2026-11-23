@@ -1,8 +1,8 @@
 ﻿import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.caddieline.app',
-  appName: 'PocketCaddie',
+  appId: 'com.pocketcaddy.app',
+  appName: 'PocketCaddy',
   webDir: 'dist',
   server: {
     androidScheme: 'https'

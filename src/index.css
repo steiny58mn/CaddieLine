@@ -126,6 +126,7 @@ html.dark .glass-card {
 /* Override Leaflet default div-icon background & border */
 .leaflet-div-icon,
 .custom-leaflet-badge,
+.pocketcaddy-div-icon,
 .caddieline-div-icon,
 .ball-position-marker {
   background: transparent !important;

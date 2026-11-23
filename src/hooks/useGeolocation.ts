@@ -14,7 +14,7 @@ export interface GeolocationState {
   requestSingleFix: () => Promise<LatLngLiteral | null>;
 }
 
-const GPS_CACHE_KEY = 'caddieline_last_gps_position';
+const GPS_CACHE_KEY = 'pocketcaddy_last_gps_position';
 
 function getCachedGpsPosition(): LatLngLiteral | null {
   try {

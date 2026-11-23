@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Flag Pole -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M8,2h2v19H8z"/>
+    <!-- Triangular Golf Flag -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M10,3l9,4.5L10,12z"/>
+    <!-- Hole Base -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M6,20a5,2 0 1,0 10,0a5,2 0 1,0 -10,0"/>
+</vector>

@@ -181,7 +181,7 @@ export const OpenGolfHoleMap = forwardRef<OpenGolfHoleMapHandle, OpenGolfHoleMap
   const [isHolePickerOpen, setIsHolePickerOpen] = useState<boolean>(false);
   const [isHudCollapsed, setIsHudCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('caddieline_hud_collapsed') === 'true';
+      return (localStorage.getItem('pocketcaddy_hud_collapsed') === 'true' || localStorage.getItem('caddieline_hud_collapsed') === 'true');
     } catch {
       return false;
     }

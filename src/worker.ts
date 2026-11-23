@@ -21,7 +21,7 @@ export interface CloudflareEnv {
   };
 }
 
-const OSM_USER_AGENT = 'CaddieLineGolfTracker/1.0 (+https://caddieline.app)';
+const OSM_USER_AGENT = 'PocketCaddyGolfTracker/1.0 (+https://pocketcaddy.app)';
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass.openstreetmap.fr/api/interpreter',

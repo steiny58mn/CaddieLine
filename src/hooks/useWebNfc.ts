@@ -31,6 +31,18 @@ declare global {
     };
     NativeFeedback?: {
       updateFeedbackSettings?: (vibrate: boolean, sound: boolean) => void;
+      requestDeviceUnlock?: () => void;
+      notifyWatchClubScanned?: (clubName: string, clubShortName: string) => void;
+      updateWatchDistances?: (
+        roundActive: boolean,
+        courseName: string,
+        hole: number,
+        par: number,
+        front: number,
+        pin: number,
+        back: number,
+        unit: string
+      ) => void;
     };
   }
 }
